@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@300;400;500;600&display=swap");
+
+@layer base {
+  body {
+    @apply bg-carbon-950 text-carbon-200 font-sans antialiased;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-carbon-900/60 border border-carbon-800 rounded-xl backdrop-blur-sm;
+  }
+
+  .card-glow {
+    @apply card relative overflow-hidden;
+  }
+
+  .card-glow::before {
+    content: "";
+    @apply absolute inset-0 opacity-0 transition-opacity duration-500 rounded-xl;
+    background: radial-gradient(
+      600px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+      rgba(0, 255, 157, 0.04),
+      transparent 40%
+    );
+  }
+
+  .card-glow:hover::before {
+    @apply opacity-100;
+  }
+
+  .stat-value {
+    @apply text-3xl font-mono font-semibold tracking-tight text-white;
+  }
+
+  .stat-label {
+    @apply text-xs font-mono uppercase tracking-widest text-carbon-500;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-md text-xs font-mono font-medium border;
+  }
+
+  .sidebar-link {
+    @apply flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 text-carbon-400 hover:text-white hover:bg-carbon-800/60;
+  }
+
+  .sidebar-link.active {
+    @apply text-white bg-carbon-800/80 border border-carbon-700/50;
+  }
+
+  .table-row {
+    @apply border-b border-carbon-800/50 hover:bg-carbon-800/30 transition-colors;
+  }
+
+  .dot-pulse {
+    @apply w-2 h-2 rounded-full animate-pulse-slow;
+  }
+
+  .grid-bg {
+    background-image: radial-gradient(
+      circle at 1px 1px,
+      rgba(255, 255, 255, 0.03) 1px,
+      transparent 0
+    );
+    background-size: 24px 24px;
+  }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-carbon-700 rounded-full;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-carbon-600;
+}
+
+/* Noise texture overlay */
+.noise::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.015;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  z-index: 9999;
+}
