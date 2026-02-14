@@ -100,42 +100,44 @@ function CronJobCard({
         className="p-5 cursor-pointer hover:bg-carbon-800/20 transition-colors"
         onClick={onToggle}
       >
-        <div className="flex items-center gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
           {/* Agent color dot */}
-          <div
-            className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-            style={{
-              backgroundColor: `${job.agent_color || "#666"}15`,
-              border: `1px solid ${job.agent_color || "#666"}30`,
-            }}
-          >
-            <Clock
-              className="w-4 h-4"
-              style={{ color: job.agent_color || "#666" }}
-            />
-          </div>
-
-          {/* Info */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-medium text-white">{job.name}</h3>
-              {!job.enabled && (
-                <span className="badge bg-carbon-800 text-carbon-500 border-carbon-700">
-                  <Pause className="w-3 h-3 mr-1" />
-                  paused
-                </span>
-              )}
+          <div className="flex items-center gap-3 sm:gap-4">
+            <div
+              className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
+              style={{
+                backgroundColor: `${job.agent_color || "#666"}15`,
+                border: `1px solid ${job.agent_color || "#666"}30`,
+              }}
+            >
+              <Clock
+                className="w-4 h-4"
+                style={{ color: job.agent_color || "#666" }}
+              />
             </div>
-            <p className="text-xs text-carbon-500 mt-0.5">
-              {job.description}
-            </p>
-            <p className="text-[11px] font-mono text-carbon-600 mt-1">
-              {parseCron(job.schedule)} · {job.agent_name}
-            </p>
+
+            {/* Info */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-medium text-white">{job.name}</h3>
+                {!job.enabled && (
+                  <span className="badge bg-carbon-800 text-carbon-500 border-carbon-700">
+                    <Pause className="w-3 h-3 mr-1" />
+                    paused
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-carbon-500 mt-0.5">
+                {job.description}
+              </p>
+              <p className="text-[11px] font-mono text-carbon-600 mt-1">
+                {parseCron(job.schedule)} · {job.agent_name}
+              </p>
+            </div>
           </div>
 
           {/* Stats */}
-          <div className="flex items-center gap-6 shrink-0">
+          <div className="flex items-center gap-3 sm:gap-6 shrink-0 flex-wrap pl-13 sm:pl-0">
             <div className="text-right">
               <p className="text-xs font-mono text-carbon-400">
                 {job.run_count} runs
@@ -177,24 +179,22 @@ function CronJobCard({
               {runs.map((run) => (
                 <div
                   key={run.id}
-                  className="flex items-center gap-4 py-2 px-3 rounded-lg hover:bg-carbon-800/30 transition-colors"
+                  className="flex flex-wrap items-center gap-2 sm:gap-4 py-2 px-3 rounded-lg hover:bg-carbon-800/30 transition-colors"
                 >
                   <StatusBadge status={run.status} />
-                  <span className="text-xs text-carbon-400 font-mono flex-1">
+                  <span className="text-xs text-carbon-400 font-mono flex-1 min-w-[140px]">
                     {new Date(run.started_at).toLocaleString()}
                   </span>
-                  {run.duration_ms && (
-                    <span className="text-xs text-carbon-500 font-mono flex items-center gap-1">
-                      <Timer className="w-3 h-3" />
-                      {(run.duration_ms / 1000).toFixed(1)}s
-                    </span>
-                  )}
-                  <span className="text-xs text-carbon-500 font-mono">
-                    {formatTokens(run.tokens_used)} tokens
-                  </span>
-                  <span className="text-xs text-carbon-500 font-mono">
-                    {formatCost(run.cost_cents)}
-                  </span>
+                  <div className="flex items-center gap-3 sm:gap-4 text-xs text-carbon-500 font-mono">
+                    {run.duration_ms && (
+                      <span className="flex items-center gap-1">
+                        <Timer className="w-3 h-3" />
+                        {(run.duration_ms / 1000).toFixed(1)}s
+                      </span>
+                    )}
+                    <span>{formatTokens(run.tokens_used)} tokens</span>
+                    <span>{formatCost(run.cost_cents)}</span>
+                  </div>
                 </div>
               ))}
             </div>
@@ -224,7 +224,7 @@ export default function CronMonitorPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div>
           <h1 className="text-2xl font-semibold text-white tracking-tight">
             Cron Monitor
@@ -243,7 +243,7 @@ export default function CronMonitorPage() {
 
       {/* Summary Bar */}
       {jobs && (
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="card p-4 text-center">
             <p className="stat-value text-xl">{jobs.length}</p>
             <p className="stat-label">Total Jobs</p>

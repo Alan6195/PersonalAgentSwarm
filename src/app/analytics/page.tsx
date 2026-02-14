@@ -112,7 +112,7 @@ export default function AnalyticsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-white tracking-tight">
             Analytics
@@ -212,7 +212,7 @@ export default function AnalyticsPage() {
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-carbon-200">{agent.name}</p>
                     </div>
-                    <div className="flex items-center gap-5 text-xs font-mono">
+                    <div className="flex items-center gap-3 sm:gap-5 text-xs font-mono flex-wrap">
                       <span className="text-carbon-400">
                         {agent.total} tasks
                       </span>
@@ -257,11 +257,11 @@ export default function AnalyticsPage() {
                   key={i}
                   className="flex items-center gap-3 py-2 px-3 rounded-lg hover:bg-carbon-800/30 transition-colors"
                 >
-                  <span className="text-xs font-mono text-carbon-300 w-28 truncate">
+                  <span className="text-xs font-mono text-carbon-300 w-20 sm:w-28 truncate">
                     {AGENT_NAMES[d.from_agent] || d.from_agent}
                   </span>
                   <ArrowRight className="w-3 h-3 text-neon-purple shrink-0" />
-                  <span className="text-xs font-mono text-carbon-300 w-28 truncate">
+                  <span className="text-xs font-mono text-carbon-300 w-20 sm:w-28 truncate">
                     {AGENT_NAMES[d.to_agent] || d.to_agent}
                   </span>
                   <div className="flex-1" />
@@ -285,7 +285,7 @@ export default function AnalyticsPage() {
                 <Radio className="w-3 h-3" />
                 By Channel
               </h3>
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
                 {data.channelBreakdown.map((ch) => (
                   <div key={ch.channel} className="flex items-center gap-2">
                     <span

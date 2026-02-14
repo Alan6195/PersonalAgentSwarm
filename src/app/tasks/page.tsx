@@ -21,6 +21,7 @@ import {
   ArrowUpRight,
   Filter,
   Plus,
+  ChevronDown,
 } from "lucide-react";
 
 const STATUS_COLUMNS = [
@@ -143,6 +144,16 @@ function TaskCard({ task }: { task: Task }) {
 export default function TaskBoardPage() {
   const [filterAgent, setFilterAgent] = useState<string>("");
   const [filterPriority, setFilterPriority] = useState<string>("");
+  const [collapsedCols, setCollapsedCols] = useState<Set<string>>(new Set());
+
+  const toggleCol = (key: string) => {
+    setCollapsedCols((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   const url = `/api/tasks?limit=100${
     filterAgent ? `&agent=${filterAgent}` : ""
@@ -158,7 +169,7 @@ export default function TaskBoardPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-white tracking-tight">
             Task Board
@@ -167,7 +178,7 @@ export default function TaskBoardPage() {
             {tasks?.length ?? 0} tasks
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <select
             value={filterAgent}
             onChange={(e) => setFilterAgent(e.target.value)}
@@ -198,15 +209,16 @@ export default function TaskBoardPage() {
       </div>
 
       {/* Kanban Columns */}
-      <div className="grid grid-cols-5 gap-4 min-h-[600px]">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 min-h-0 xl:min-h-[600px]">
         {grouped.map((col) => (
           <div key={col.key} className="space-y-3">
             {/* Column Header */}
             <div
               className={cn(
-                "flex items-center gap-2 pb-3 border-b",
+                "flex items-center gap-2 pb-3 border-b cursor-pointer xl:cursor-default",
                 col.border
               )}
+              onClick={() => toggleCol(col.key)}
             >
               <col.icon className={cn("w-4 h-4", col.accent)} />
               <span className={cn("text-sm font-medium", col.accent)}>
@@ -215,10 +227,21 @@ export default function TaskBoardPage() {
               <span className="text-xs font-mono text-carbon-600 ml-auto">
                 {col.tasks.length}
               </span>
+              <ChevronDown
+                className={cn(
+                  "w-4 h-4 text-carbon-500 xl:hidden transition-transform",
+                  !collapsedCols.has(col.key) && "rotate-180"
+                )}
+              />
             </div>
 
             {/* Cards */}
-            <div className="space-y-2">
+            <div
+              className={cn(
+                "space-y-2",
+                collapsedCols.has(col.key) && "hidden xl:block"
+              )}
+            >
               {col.tasks.map((task) => (
                 <TaskCard key={task.id} task={task} />
               ))}

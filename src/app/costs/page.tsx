@@ -97,7 +97,7 @@ export default function CostTrackerPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-white tracking-tight">
             Cost Tracker
@@ -125,7 +125,7 @@ export default function CostTrackerPage() {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="card-glow p-5">
           <DollarSign className="w-4 h-4 text-neon-amber mb-3" />
           <p className="stat-value text-neon-amber">{formatCost(totalCost)}</p>
@@ -316,7 +316,7 @@ export default function CostTrackerPage() {
             )}
           </div>
           {data?.byModel && (
-            <div className="flex items-center justify-center gap-6 mt-2">
+            <div className="flex items-center justify-center gap-4 sm:gap-6 mt-2 flex-wrap">
               {data.byModel.map((m) => (
                 <div key={m.model} className="flex items-center gap-2">
                   <span

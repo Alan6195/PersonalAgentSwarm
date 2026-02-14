@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { Sidebar } from "@/components/Sidebar";
+import { AppShell } from "@/components/MobileNav";
 
 export const metadata: Metadata = {
   title: "Mission Control | Alan OS",
@@ -15,14 +15,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="noise">
-        <div className="flex h-screen overflow-hidden">
-          <Sidebar />
-          <main className="flex-1 overflow-auto grid-bg">
-            <div className="max-w-[1600px] mx-auto p-6 lg:p-8">
-              {children}
-            </div>
-          </main>
-        </div>
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );
