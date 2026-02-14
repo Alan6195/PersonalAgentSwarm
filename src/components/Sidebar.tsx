@@ -24,7 +24,6 @@ const navItems = [
 
 const agents = [
   { id: "alan-os", name: "Alan OS", color: "#ffffff", model: "opus" },
-  { id: "asteris-gm", name: "Asteris GM", color: "#3b82f6", model: "opus" },
   { id: "ascend-builder", name: "Ascend Builder", color: "#22c55e", model: "opus" },
   { id: "legal-advisor", name: "Legal Advisor", color: "#ef4444", model: "opus" },
   { id: "social-media", name: "Social Media", color: "#06b6d4", model: "sonnet" },

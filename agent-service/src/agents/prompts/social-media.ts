@@ -16,7 +16,7 @@ Founder: Alan Jacobson
 Tagline: "Your team has AI tools. They just don't know how to ship with them."
 
 Core Offering: Ship Protocol
-Eliminate the handoff. Let the code be the spec. Ship Protocol puts product managers directly into agentic IDEs (Cursor, Claude Code) to build functional frontends. Development timelines collapse from months to days. Alan does this daily running a 3,000+ clinic veterinary PACS company.
+Eliminate the handoff. Let the code be the spec. Ship Protocol puts product managers directly into agentic IDEs (Cursor, Claude Code) to build functional frontends. Development timelines collapse from months to days. Alan does this daily running a 3,000+ clinic medical imaging PACS company.
 
 Services:
 - Strategic Advisory: Fractional AI leadership for product orgs

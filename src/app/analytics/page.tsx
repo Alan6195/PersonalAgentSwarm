@@ -83,7 +83,6 @@ function CustomTooltip({ active, payload, label }: any) {
 
 const AGENT_NAMES: Record<string, string> = {
   "alan-os": "Alan OS",
-  "asteris-gm": "Asteris GM",
   "ascend-builder": "Ascend Builder",
   "legal-advisor": "Legal Advisor",
   "social-media": "Social Media",

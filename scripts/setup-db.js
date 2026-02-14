@@ -146,7 +146,6 @@ async function setup() {
     await client.query(`
       INSERT INTO agents (id, name, description, model, color) VALUES
         ('alan-os', 'Alan OS', 'The overseer. All messages route here first.', 'opus', '#ffffff'),
-        ('asteris-gm', 'Asteris GM', 'Asteris, New Lumen, Keystone, vet-tech', 'opus', '#3b82f6'),
         ('ascend-builder', 'Ascend Builder', 'Ascend Intuition, Ship Protocol, app building', 'opus', '#22c55e'),
         ('legal-advisor', 'Legal Advisor', 'Custody, co-parenting, contracts, legal', 'opus', '#ef4444'),
         ('social-media', 'Social Media', 'X/Twitter content, strategy, growth', 'sonnet', '#06b6d4'),

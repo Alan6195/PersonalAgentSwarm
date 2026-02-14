@@ -175,7 +175,6 @@ export default function TaskBoardPage() {
           >
             <option value="">All agents</option>
             <option value="alan-os">Alan OS</option>
-            <option value="asteris-gm">Asteris GM</option>
             <option value="ascend-builder">Ascend Builder</option>
             <option value="legal-advisor">Legal Advisor</option>
             <option value="social-media">Social Media</option>
