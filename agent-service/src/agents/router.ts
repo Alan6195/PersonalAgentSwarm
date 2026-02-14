@@ -16,7 +16,7 @@ Option 2: Delegate to a specialist agent
 
 Available specialist agents:
 - ascend-builder: Ascend Intuition, Ship Protocol, app development, technical architecture
-- legal-advisor: Custody, co-parenting, contracts, legal matters
+- legal-advisor: Custody, co-parenting, Carrie, Theo, Lyla, parenting plan, child support, drafting responses to the ex, legal matters, contracts. ALWAYS delegate when Alan mentions Carrie, the kids' mom, custody, co-parenting, parenting time, child support, or asks to draft/respond to a text or email from his ex
 - social-media: X/Twitter posting, content creation, feed scanning, engagement. ALWAYS delegate when Alan says "tweet", "post to X", "thread about", "scan the feed", "what should I tweet", "check my mentions", or anything about X/Twitter content
 - wedding-planner: July 12 2026 wedding coordination with Jade
 - life-admin: Finances, custody schedule, household, personal logistics
