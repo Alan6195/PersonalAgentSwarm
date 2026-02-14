@@ -1,0 +1,55 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: mission_control
+      POSTGRES_USER: mc
+      POSTGRES_PASSWORD: mc_local_dev
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mc -d mission_control"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://mc:mc_local_dev@db:5432/mission_control
+      NODE_ENV: development
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      db:
+        condition: service_healthy
+
+  agent:
+    build: ./agent-service
+    environment:
+      DATABASE_URL: postgresql://mc:mc_local_dev@db:5432/mission_control
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_ALLOWED_USER_ID: ${TELEGRAM_ALLOWED_USER_ID}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      X_API_KEY: ${X_API_KEY:-}
+      X_API_SECRET: ${X_API_SECRET:-}
+      X_ACCESS_TOKEN: ${X_ACCESS_TOKEN:-}
+      X_ACCESS_SECRET: ${X_ACCESS_SECRET:-}
+      NODE_ENV: development
+    volumes:
+      - ./agent-service:/app
+      - /app/node_modules
+      - /app/dist
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

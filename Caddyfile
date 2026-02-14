@@ -1,0 +1,14 @@
+control.ascend-intuition.com {
+    # Webhook routes go to agent service (no auth required)
+    handle /api/webhooks/* {
+        reverse_proxy agent:3001
+    }
+
+    # Everything else goes to Next.js dashboard (auth required)
+    handle {
+        basicauth * {
+            alan $2a$14$1lHXBbdACKI1I9cQPr/LqO9X2ZSMs6z3bKfU0Mey4Fgk3wJMnreAC
+        }
+        reverse_proxy app:3000
+    }
+}

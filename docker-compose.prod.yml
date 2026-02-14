@@ -1,0 +1,73 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mission_control
+      POSTGRES_USER: mc
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mc_prod_change_me}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mc -d mission_control"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://mc:${POSTGRES_PASSWORD:-mc_prod_change_me}@db:5432/mission_control
+      NODE_ENV: production
+      NEXT_PUBLIC_APP_URL: https://control.ascend-intuition.com
+    depends_on:
+      db:
+        condition: service_healthy
+
+  agent:
+    build:
+      context: ./agent-service
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://mc:${POSTGRES_PASSWORD:-mc_prod_change_me}@db:5432/mission_control
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_ALLOWED_USER_ID: ${TELEGRAM_ALLOWED_USER_ID}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      X_API_KEY: ${X_API_KEY:-}
+      X_API_SECRET: ${X_API_SECRET:-}
+      X_ACCESS_TOKEN: ${X_ACCESS_TOKEN:-}
+      X_ACCESS_SECRET: ${X_ACCESS_SECRET:-}
+      ATLAS_CLOUD_API_KEY: ${ATLAS_CLOUD_API_KEY:-}
+      DEV_AGENT_CWD: /opt/mission-control
+      DEV_AGENT_MAX_TURNS: 30
+      DEV_AGENT_MAX_BUDGET_USD: 5.00
+      WEBHOOK_PORT: 3001
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET}
+      NODE_ENV: production
+    volumes:
+      - /opt/mission-control:/opt/mission-control
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      db:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

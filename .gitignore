@@ -27,3 +27,6 @@ Thumbs.db
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# agent-service build output
+agent-service/dist/
