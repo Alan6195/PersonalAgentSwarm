@@ -123,15 +123,12 @@ export async function processGmailActions(
             replacement = '\n\n(Error: send_email requires to, subject, and body)';
             break;
           }
-          const sent = await gmailMail.sendEmail({
-            to,
-            subject,
-            body: bodyContent,
-            threadId: fields.thread_id || undefined,
-            inReplyTo: fields.in_reply_to || undefined,
-          }, taskId);
-          replacement = `\n\nEmail sent to ${to} (ID: ${sent.id}, Thread: ${sent.threadId})`;
-          actions.push(`send_email to ${to}`);
+
+          // SAFETY: Never auto-send emails. Hold as draft for Alan's approval via Telegram.
+          // The agent must tell Alan what it wants to send; Alan can then approve manually.
+          replacement = `\n\n**DRAFT EMAIL (pending your approval):**\nTo: ${to}\nSubject: ${subject}\n${fields.thread_id ? `Thread: ${fields.thread_id}\n` : ''}---\n${bodyContent}\n---\nReply "send it" or "approve" to send this email. I will NOT send it until you confirm.`;
+          actions.push(`send_email_draft to ${to}`);
+          console.log(`[GmailActions] HELD send_email to ${to} (subject: "${subject}") for approval`);
           break;
         }
 
