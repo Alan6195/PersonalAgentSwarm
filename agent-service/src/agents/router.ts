@@ -7,6 +7,7 @@ import * as activityLogger from '../services/activity-logger';
 import { processTwitterActions } from '../services/twitter-actions';
 import { processEmailActions } from '../services/email-actions';
 import { processGmailActions } from '../services/gmail-actions';
+import { processWeddingDataActions } from '../services/wedding-data-actions';
 import { executeDeveloperTask } from '../services/developer-executor';
 import { getPrompt } from './registry';
 import * as memory from '../services/conversation-memory';
@@ -261,6 +262,20 @@ export async function handleUserMessage(
               channel: 'gmail',
               summary: `Gmail actions: ${gmailResult.actions.join(', ')}`,
               metadata: { actions: gmailResult.actions },
+            });
+          }
+
+          // Also process any wedding dashboard data blocks
+          const weddingDataResult = await processWeddingDataActions(finalResponse, subTask.id);
+          finalResponse = weddingDataResult.result;
+          if (weddingDataResult.actionsTaken) {
+            await activityLogger.log({
+              event_type: 'wedding_data_update',
+              agent_id: 'wedding-planner',
+              task_id: subTask.id,
+              channel: 'wedding',
+              summary: `Wedding data: ${weddingDataResult.actions.join(', ')}`,
+              metadata: { actions: weddingDataResult.actions },
             });
           }
         }

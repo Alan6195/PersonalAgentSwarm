@@ -16,6 +16,7 @@ import * as activityLogger from './activity-logger';
 import { processTwitterActions } from './twitter-actions';
 import { processEmailActions } from './email-actions';
 import { processGmailActions } from './gmail-actions';
+import { processWeddingDataActions } from './wedding-data-actions';
 
 interface CronJob {
   id: number;
@@ -184,6 +185,21 @@ async function runJob(job: CronJob): Promise<void> {
           channel: 'gmail',
           summary: `Cron Gmail actions: ${gmailResult.actions.join(', ')}`,
           metadata: { actions: gmailResult.actions, cron_job: job.name },
+        });
+      }
+
+      // Also process any wedding dashboard data blocks
+      const weddingDataResult = await processWeddingDataActions(finalResponse, task.id);
+      finalResponse = weddingDataResult.result;
+
+      if (weddingDataResult.actionsTaken) {
+        await activityLogger.log({
+          event_type: 'wedding_data_update',
+          agent_id: 'wedding-planner',
+          task_id: task.id,
+          channel: 'wedding',
+          summary: `Cron wedding data: ${weddingDataResult.actions.join(', ')}`,
+          metadata: { actions: weddingDataResult.actions, cron_job: job.name },
         });
       }
     }
