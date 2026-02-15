@@ -12,6 +12,7 @@ import {
   Bot,
   Radio,
   Zap,
+  Heart,
 } from "lucide-react";
 
 const navItems = [
@@ -20,6 +21,7 @@ const navItems = [
   { href: "/crons", label: "Cron Monitor", icon: Clock },
   { href: "/costs", label: "Cost Tracker", icon: DollarSign },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/wedding", label: "Wedding", icon: Heart },
 ];
 
 const agents = [

@@ -101,3 +101,62 @@ export interface DashboardStats {
   crons_failed: number;
   wedding_days_left: number;
 }
+
+// Wedding Planner
+
+export interface WeddingVendor {
+  id: number;
+  name: string;
+  category: string;
+  contact_name: string | null;
+  email: string | null;
+  phone: string | null;
+  status: "researching" | "contacted" | "quoted" | "booked" | "paid" | "cancelled";
+  cost_estimate: number | null;
+  cost_actual: number | null;
+  notes: string | null;
+  next_action: string | null;
+  next_action_date: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WeddingBudgetItem {
+  id: number;
+  category: string;
+  item: string;
+  estimated_cents: number;
+  actual_cents: number;
+  paid: boolean;
+  vendor_id: number | null;
+  due_date: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface WeddingTimelineItem {
+  id: number;
+  title: string;
+  date: string;
+  category: "milestone" | "deadline" | "appointment" | "payment";
+  completed: boolean;
+  vendor_id: number | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface WeddingDashboardData {
+  vendors: WeddingVendor[];
+  budget: WeddingBudgetItem[];
+  timeline: WeddingTimelineItem[];
+  stats: {
+    days_left: number;
+    total_estimated_cents: number;
+    total_actual_cents: number;
+    total_paid_cents: number;
+    vendors_booked: number;
+    vendors_total: number;
+    upcoming_deadlines: number;
+  };
+  recent_activity: ActivityEvent[];
+}
