@@ -20,6 +20,11 @@ export const config = {
   MS_CLIENT_SECRET: process.env.MS_CLIENT_SECRET || '',
   MS_REFRESH_TOKEN: process.env.MS_REFRESH_TOKEN || '',
 
+  // Gmail (Wedding email)
+  GMAIL_CLIENT_ID: process.env.GMAIL_CLIENT_ID || '',
+  GMAIL_CLIENT_SECRET: process.env.GMAIL_CLIENT_SECRET || '',
+  GMAIL_REFRESH_TOKEN: process.env.GMAIL_REFRESH_TOKEN || '',
+
   // Atlas Cloud (image/video generation)
   ATLAS_CLOUD_API_KEY: process.env.ATLAS_CLOUD_API_KEY || '',
 
@@ -69,6 +74,12 @@ export function validateConfig(): void {
     console.log('[Config] Microsoft Graph credentials found; Outlook email features enabled.');
   } else {
     console.log('[Config] Microsoft Graph credentials not set; email features disabled.');
+  }
+
+  if (config.GMAIL_CLIENT_ID && config.GMAIL_REFRESH_TOKEN) {
+    console.log('[Config] Gmail credentials found; wedding email features enabled.');
+  } else {
+    console.log('[Config] Gmail credentials not set; wedding email features disabled.');
   }
 
   if (config.ATLAS_CLOUD_API_KEY) {

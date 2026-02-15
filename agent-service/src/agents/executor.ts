@@ -4,6 +4,7 @@ import { callClaude } from '../services/claude';
 import * as taskManager from '../services/task-manager';
 import * as agentMemory from '../services/agent-memory';
 import * as outlookMail from '../services/outlook-mail';
+import * as gmailMail from '../services/gmail-mail';
 
 // Agents that use persistent semantic memory
 const MEMORY_AGENTS = new Set(['legal-advisor']);
@@ -49,6 +50,25 @@ export async function run(context: AgentContext): Promise<AgentResponse> {
           }
         } catch (emailErr) {
           console.warn(`[Executor] Email context fetch failed, continuing without:`, (emailErr as Error).message);
+        }
+      }
+    }
+
+    // For wedding-planner, inject Gmail context when the message is email-related
+    if (context.agentId === 'wedding-planner' && gmailMail.isConfigured()) {
+      const gmailKeywords = /\b(email|inbox|mail|triage|messages?|unread|gmail|wedding email|vendor email|check email)\b/i;
+      if (gmailKeywords.test(context.userMessage)) {
+        try {
+          const messages = await gmailMail.getInboxMessages({ maxResults: 30, unreadOnly: true });
+          if (messages.length > 0) {
+            const formatted = gmailMail.formatMessagesForAgent(messages);
+            agentPrompt = `${agentPrompt}\n\n## GMAIL_CONTEXT\nBelow are ${messages.length} unread emails from alancarissawedding@gmail.com (auto-fetched). Use this data to respond to Alan's request. You can reference message IDs in your [GMAIL_ACTION] blocks.\n\n${formatted}`;
+            console.log(`[Executor] Injected ${messages.length} unread Gmail messages for wedding-planner`);
+          } else {
+            agentPrompt = `${agentPrompt}\n\n## GMAIL_CONTEXT\nThe wedding inbox (alancarissawedding@gmail.com) has 0 unread emails.`;
+          }
+        } catch (gmailErr) {
+          console.warn(`[Executor] Gmail context fetch failed, continuing without:`, (gmailErr as Error).message);
         }
       }
     }

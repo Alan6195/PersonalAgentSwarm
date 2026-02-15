@@ -6,6 +6,7 @@ import * as taskManager from '../services/task-manager';
 import * as activityLogger from '../services/activity-logger';
 import { processTwitterActions } from '../services/twitter-actions';
 import { processEmailActions } from '../services/email-actions';
+import { processGmailActions } from '../services/gmail-actions';
 import { executeDeveloperTask } from '../services/developer-executor';
 import { getPrompt } from './registry';
 import * as memory from '../services/conversation-memory';
@@ -19,7 +20,7 @@ Available specialist agents:
 - ascend-builder: Ascend Intuition, Ship Protocol, app development, technical architecture
 - legal-advisor: Custody, co-parenting, Carrie, Theo, Lyla, parenting plan, child support, drafting responses to the ex, legal matters, contracts. ALWAYS delegate when Alan mentions Carrie, the kids' mom, custody, co-parenting, parenting time, child support, or asks to draft/respond to a text or email from his ex
 - social-media: X/Twitter posting, content creation, feed scanning, engagement. ALWAYS delegate when Alan says "tweet", "post to X", "thread about", "scan the feed", "what should I tweet", "check my mentions", or anything about X/Twitter content
-- wedding-planner: July 12 2026 wedding coordination with Jade
+- wedding-planner: July 12 2026 wedding coordination with Jade, wedding email management, vendor emails. ALWAYS delegate when Alan says "wedding email", "check wedding inbox", "wedding vendor", "email the florist/DJ/photographer/caterer/venue"
 - life-admin: Finances, custody schedule, household, personal logistics, email management, inbox triage, email cleanup. ALWAYS delegate when Alan says "check my email", "clean my inbox", "email triage", or anything about managing email
 - research-analyst: Deep research, competitive intel, market analysis
 - comms-drafter: Email drafting, Slack messages, proposals, written communications
@@ -244,6 +245,22 @@ export async function handleUserMessage(
               channel: 'email',
               summary: `Email actions: ${emailResult.actions.join(', ')}`,
               metadata: { actions: emailResult.actions },
+            });
+          }
+        }
+
+        // If wedding-planner agent, process any Gmail action blocks
+        if (routing.target_agent_id === 'wedding-planner') {
+          const gmailResult = await processGmailActions(finalResponse, subTask.id);
+          finalResponse = gmailResult.result;
+          if (gmailResult.actionsTaken) {
+            await activityLogger.log({
+              event_type: 'gmail_action',
+              agent_id: 'wedding-planner',
+              task_id: subTask.id,
+              channel: 'gmail',
+              summary: `Gmail actions: ${gmailResult.actions.join(', ')}`,
+              metadata: { actions: gmailResult.actions },
             });
           }
         }

@@ -15,6 +15,7 @@ import * as taskManager from './task-manager';
 import * as activityLogger from './activity-logger';
 import { processTwitterActions } from './twitter-actions';
 import { processEmailActions } from './email-actions';
+import { processGmailActions } from './gmail-actions';
 
 interface CronJob {
   id: number;
@@ -170,6 +171,23 @@ async function runJob(job: CronJob): Promise<void> {
       }
     }
 
+    // If wedding-planner agent, process Gmail action blocks
+    if (job.agent_id === 'wedding-planner') {
+      const gmailResult = await processGmailActions(finalResponse, task.id);
+      finalResponse = gmailResult.result;
+
+      if (gmailResult.actionsTaken) {
+        await activityLogger.log({
+          event_type: 'gmail_action',
+          agent_id: 'wedding-planner',
+          task_id: task.id,
+          channel: 'gmail',
+          summary: `Cron Gmail actions: ${gmailResult.actions.join(', ')}`,
+          metadata: { actions: gmailResult.actions, cron_job: job.name },
+        });
+      }
+    }
+
     const durationMs = Date.now() - startTime;
 
     // Update cron_runs
@@ -228,6 +246,14 @@ async function runJob(job: CronJob): Promise<void> {
     // Notify via Telegram for life-admin email triage jobs
     if (job.agent_id === 'life-admin' && telegramNotify && job.name.toLowerCase().includes('email')) {
       const notification = `*Email Triage (${job.name})*\n\n${finalResponse.substring(0, 3000)}`;
+      try {
+        await telegramNotify(notification);
+      } catch { /* non-critical */ }
+    }
+
+    // Notify via Telegram for wedding-planner email triage jobs
+    if (job.agent_id === 'wedding-planner' && telegramNotify && job.name.toLowerCase().includes('email')) {
+      const notification = `*Wedding Email (${job.name})*\n\n${finalResponse.substring(0, 3000)}`;
       try {
         await telegramNotify(notification);
       } catch { /* non-critical */ }
