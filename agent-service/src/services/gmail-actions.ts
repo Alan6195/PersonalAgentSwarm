@@ -96,9 +96,10 @@ export async function processGmailActions(
             replacement = '\n\n(Error: archive requires message_ids)';
             break;
           }
-          const count = await gmailMail.archiveMessages(ids, taskId);
-          replacement = `\n\nArchived ${count} email(s).`;
-          actions.push(`archive (${count})`);
+          // SAFETY: Hold archive for Alan's approval via Telegram.
+          replacement = `\n\n**PENDING ARCHIVE (${ids.length} email(s)):**\nMessage IDs: ${ids.join(', ')}\n\nReply "archive approved" to confirm. I will NOT archive until you confirm.`;
+          actions.push(`archive_pending (${ids.length})`);
+          console.log(`[GmailActions] HELD archive of ${ids.length} messages for approval`);
           break;
         }
 
@@ -108,9 +109,10 @@ export async function processGmailActions(
             replacement = '\n\n(Error: delete requires message_ids)';
             break;
           }
-          const count = await gmailMail.trashMessages(ids, taskId);
-          replacement = `\n\nDeleted ${count} email(s).`;
-          actions.push(`delete (${count})`);
+          // SAFETY: Hold deletion for Alan's approval via Telegram.
+          replacement = `\n\n**PENDING DELETION (${ids.length} email(s)):**\nMessage IDs: ${ids.join(', ')}\n\nReply "delete approved" to confirm. I will NOT delete until you confirm.`;
+          actions.push(`delete_pending (${ids.length})`);
+          console.log(`[GmailActions] HELD delete of ${ids.length} messages for approval`);
           break;
         }
 
