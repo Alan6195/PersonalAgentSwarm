@@ -5,6 +5,7 @@ import * as executor from './executor';
 import * as taskManager from '../services/task-manager';
 import * as activityLogger from '../services/activity-logger';
 import { processTwitterActions } from '../services/twitter-actions';
+import { processEmailActions } from '../services/email-actions';
 import { executeDeveloperTask } from '../services/developer-executor';
 import { getPrompt } from './registry';
 import * as memory from '../services/conversation-memory';
@@ -19,7 +20,7 @@ Available specialist agents:
 - legal-advisor: Custody, co-parenting, Carrie, Theo, Lyla, parenting plan, child support, drafting responses to the ex, legal matters, contracts. ALWAYS delegate when Alan mentions Carrie, the kids' mom, custody, co-parenting, parenting time, child support, or asks to draft/respond to a text or email from his ex
 - social-media: X/Twitter posting, content creation, feed scanning, engagement. ALWAYS delegate when Alan says "tweet", "post to X", "thread about", "scan the feed", "what should I tweet", "check my mentions", or anything about X/Twitter content
 - wedding-planner: July 12 2026 wedding coordination with Jade
-- life-admin: Finances, custody schedule, household, personal logistics
+- life-admin: Finances, custody schedule, household, personal logistics, email management, inbox triage, email cleanup. ALWAYS delegate when Alan says "check my email", "clean my inbox", "email triage", or anything about managing email
 - research-analyst: Deep research, competitive intel, market analysis
 - comms-drafter: Email drafting, Slack messages, proposals, written communications
 - gilfoyle: Code changes, bug fixes, new features, file reading/editing, shell commands, codebase operations, git, npm, docker
@@ -227,6 +228,22 @@ export async function handleUserMessage(
               channel: 'twitter',
               summary: `X action: ${twitterResult.actionType}`,
               metadata: { action_type: twitterResult.actionType },
+            });
+          }
+        }
+
+        // If life-admin agent, process any email action blocks
+        if (routing.target_agent_id === 'life-admin') {
+          const emailResult = await processEmailActions(finalResponse, subTask.id);
+          finalResponse = emailResult.result;
+          if (emailResult.actionsTaken) {
+            await activityLogger.log({
+              event_type: 'email_action',
+              agent_id: 'life-admin',
+              task_id: subTask.id,
+              channel: 'email',
+              summary: `Email actions: ${emailResult.actions.join(', ')}`,
+              metadata: { actions: emailResult.actions },
             });
           }
         }

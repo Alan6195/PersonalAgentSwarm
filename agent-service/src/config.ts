@@ -15,6 +15,11 @@ export const config = {
   X_ACCESS_TOKEN: process.env.X_ACCESS_TOKEN || '',
   X_ACCESS_SECRET: process.env.X_ACCESS_SECRET || '',
 
+  // Microsoft Graph (Outlook email)
+  MS_CLIENT_ID: process.env.MS_CLIENT_ID || '',
+  MS_CLIENT_SECRET: process.env.MS_CLIENT_SECRET || '',
+  MS_REFRESH_TOKEN: process.env.MS_REFRESH_TOKEN || '',
+
   // Atlas Cloud (image/video generation)
   ATLAS_CLOUD_API_KEY: process.env.ATLAS_CLOUD_API_KEY || '',
 
@@ -58,6 +63,12 @@ export function validateConfig(): void {
     console.log('[Config] X/Twitter API credentials found.');
   } else {
     console.log('[Config] X/Twitter API credentials not set; X features disabled.');
+  }
+
+  if (config.MS_CLIENT_ID && config.MS_REFRESH_TOKEN) {
+    console.log('[Config] Microsoft Graph credentials found; Outlook email features enabled.');
+  } else {
+    console.log('[Config] Microsoft Graph credentials not set; email features disabled.');
   }
 
   if (config.ATLAS_CLOUD_API_KEY) {

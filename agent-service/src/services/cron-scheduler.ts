@@ -14,6 +14,7 @@ import * as executor from '../agents/executor';
 import * as taskManager from './task-manager';
 import * as activityLogger from './activity-logger';
 import { processTwitterActions } from './twitter-actions';
+import { processEmailActions } from './email-actions';
 
 interface CronJob {
   id: number;
@@ -152,6 +153,23 @@ async function runJob(job: CronJob): Promise<void> {
       }
     }
 
+    // If life-admin agent, process email action blocks
+    if (job.agent_id === 'life-admin') {
+      const emailResult = await processEmailActions(finalResponse, task.id);
+      finalResponse = emailResult.result;
+
+      if (emailResult.actionsTaken) {
+        await activityLogger.log({
+          event_type: 'email_action',
+          agent_id: 'life-admin',
+          task_id: task.id,
+          channel: 'email',
+          summary: `Cron email actions: ${emailResult.actions.join(', ')}`,
+          metadata: { actions: emailResult.actions, cron_job: job.name },
+        });
+      }
+    }
+
     const durationMs = Date.now() - startTime;
 
     // Update cron_runs
@@ -202,6 +220,14 @@ async function runJob(job: CronJob): Promise<void> {
     // Notify via Telegram for social-media posts (so Alan can see what was posted)
     if (job.agent_id === 'social-media' && telegramNotify) {
       const notification = `*Autonomous post (${job.name})*\n\n${finalResponse.substring(0, 3000)}`;
+      try {
+        await telegramNotify(notification);
+      } catch { /* non-critical */ }
+    }
+
+    // Notify via Telegram for life-admin email triage jobs
+    if (job.agent_id === 'life-admin' && telegramNotify && job.name.toLowerCase().includes('email')) {
+      const notification = `*Email Triage (${job.name})*\n\n${finalResponse.substring(0, 3000)}`;
       try {
         await telegramNotify(notification);
       } catch { /* non-critical */ }

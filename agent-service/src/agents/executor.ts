@@ -3,6 +3,7 @@ import { getPrompt, getModel } from './registry';
 import { callClaude } from '../services/claude';
 import * as taskManager from '../services/task-manager';
 import * as agentMemory from '../services/agent-memory';
+import * as outlookMail from '../services/outlook-mail';
 
 // Agents that use persistent semantic memory
 const MEMORY_AGENTS = new Set(['legal-advisor']);
@@ -30,6 +31,25 @@ export async function run(context: AgentContext): Promise<AgentResponse> {
         }
       } catch (memErr) {
         console.warn(`[Executor] Memory recall failed for ${context.agentId}, continuing without:`, (memErr as Error).message);
+      }
+    }
+
+    // For life-admin, inject email context when the message is email-related
+    if (context.agentId === 'life-admin' && outlookMail.isConfigured()) {
+      const emailKeywords = /\b(email|inbox|mail|triage|messages?|unread|outlook|hotmail)\b/i;
+      if (emailKeywords.test(context.userMessage)) {
+        try {
+          const messages = await outlookMail.getInboxMessages({ top: 30, unreadOnly: true });
+          if (messages.length > 0) {
+            const formatted = outlookMail.formatMessagesForAgent(messages);
+            agentPrompt = `${agentPrompt}\n\n## EMAIL_CONTEXT\nBelow are Alan's ${messages.length} unread emails (auto-fetched). Use this data to respond to his request. You can reference message IDs in your [EMAIL_ACTION] blocks.\n\n${formatted}`;
+            console.log(`[Executor] Injected ${messages.length} unread emails for life-admin`);
+          } else {
+            agentPrompt = `${agentPrompt}\n\n## EMAIL_CONTEXT\nAlan's inbox has 0 unread emails.`;
+          }
+        } catch (emailErr) {
+          console.warn(`[Executor] Email context fetch failed, continuing without:`, (emailErr as Error).message);
+        }
       }
     }
 

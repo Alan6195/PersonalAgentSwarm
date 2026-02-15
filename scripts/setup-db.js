@@ -160,9 +160,9 @@ async function setup() {
     await client.query(`
       INSERT INTO cron_jobs (name, description, schedule, agent_id) VALUES
         ('Morning Briefing', 'Daily 6:30 AM: Calendar, weather, custody, priorities, alerts, wedding countdown', '30 6 * * *', 'alan-os'),
-        ('Email Triage AM', 'Scan inbox, categorize URGENT/IMPORTANT/FYI, draft urgent responses', '0 8 * * *', 'alan-os'),
-        ('Email Triage Noon', 'Midday inbox scan', '0 12 * * *', 'alan-os'),
-        ('Email Triage PM', 'Afternoon inbox scan', '0 17 * * *', 'alan-os'),
+        ('Email Triage AM', 'Scan inbox, categorize URGENT/IMPORTANT/FYI, draft urgent responses', '0 8 * * *', 'life-admin'),
+        ('Email Triage Noon', 'Midday inbox scan', '0 12 * * *', 'life-admin'),
+        ('Email Triage PM', 'Afternoon inbox scan', '0 17 * * *', 'life-admin'),
         ('End of Day Review', 'Mon-Fri 8 PM: What got done, carrying over, loose ends', '0 20 * * 1-5', 'alan-os'),
         ('Weekly Planning', 'Sunday 7 PM: Review last week, set priorities, flag deadlines', '0 19 * * 0', 'alan-os'),
         ('Monthly Financial', '1st of month 9 AM: Child support, expenses, revenue, upcoming costs', '0 9 1 * *', 'life-admin')

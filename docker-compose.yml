@@ -42,6 +42,9 @@ services:
       X_API_SECRET: ${X_API_SECRET:-}
       X_ACCESS_TOKEN: ${X_ACCESS_TOKEN:-}
       X_ACCESS_SECRET: ${X_ACCESS_SECRET:-}
+      MS_CLIENT_ID: ${MS_CLIENT_ID:-}
+      MS_CLIENT_SECRET: ${MS_CLIENT_SECRET:-}
+      MS_REFRESH_TOKEN: ${MS_REFRESH_TOKEN:-}
       NODE_ENV: development
     volumes:
       - ./agent-service:/app
