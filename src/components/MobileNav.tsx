@@ -10,10 +10,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const pathname = usePathname();
 
+  // Close drawer on route change
   useEffect(() => {
     setMobileOpen(false);
   }, [pathname]);
 
+  // Lock body scroll when drawer is open
   useEffect(() => {
     if (mobileOpen) {
       document.body.style.overflow = "hidden";
@@ -28,18 +30,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-screen overflow-hidden">
       {/* Mobile top bar */}
-      <div className="fixed top-0 left-0 right-0 z-40 md:hidden bg-white border-b border-cream-300 px-4 py-3 flex items-center justify-between">
+      <div className="fixed top-0 left-0 right-0 z-40 md:hidden bg-carbon-950 border-b border-carbon-800/50 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-7 h-7 rounded-lg bg-sage-50 border border-sage-200 flex items-center justify-center">
-            <Zap className="w-3.5 h-3.5 text-sage-500" />
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-neon-green/20 to-neon-blue/20 border border-neon-green/30 flex items-center justify-center">
+            <Zap className="w-3.5 h-3.5 text-neon-green" />
           </div>
-          <span className="text-sm font-semibold text-cream-900 tracking-tight">
+          <span className="text-sm font-semibold text-white tracking-tight">
             Mission Control
           </span>
         </div>
         <button
           onClick={() => setMobileOpen(!mobileOpen)}
-          className="w-9 h-9 flex items-center justify-center rounded-lg text-cream-500 hover:text-cream-800 hover:bg-cream-200 transition-colors"
+          className="w-9 h-9 flex items-center justify-center rounded-lg text-carbon-400 hover:text-white hover:bg-carbon-800/60 transition-colors"
           aria-label="Toggle menu"
         >
           {mobileOpen ? (
@@ -53,7 +55,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {/* Backdrop overlay */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm md:hidden"
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm md:hidden"
           onClick={() => setMobileOpen(false)}
         />
       )}
@@ -69,7 +71,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
 
       {/* Main content */}
-      <main className="flex-1 overflow-auto pt-14 md:pt-0">
+      <main className="flex-1 overflow-auto grid-bg pt-14 md:pt-0">
         <div className="max-w-[1600px] mx-auto p-4 sm:p-6 lg:p-8">
           {children}
         </div>

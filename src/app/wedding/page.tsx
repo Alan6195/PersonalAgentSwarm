@@ -49,11 +49,11 @@ const VENDOR_CATEGORIES = [
 ];
 
 const VENDOR_STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
-  researching: { bg: "bg-cream-400/40", text: "text-cream-500", label: "Researching" },
+  researching: { bg: "bg-carbon-700/40", text: "text-carbon-400", label: "Researching" },
   contacted: { bg: "bg-blue-500/15", text: "text-blue-400", label: "Contacted" },
   quoted: { bg: "bg-amber-500/15", text: "text-amber-400", label: "Quoted" },
   booked: { bg: "bg-emerald-500/15", text: "text-emerald-400", label: "Booked" },
-  paid: { bg: "bg-accent-green/10", text: "text-accent-green", label: "Paid" },
+  paid: { bg: "bg-neon-green/10", text: "text-neon-green", label: "Paid" },
   cancelled: { bg: "bg-red-500/15", text: "text-red-400", label: "Cancelled" },
 };
 
@@ -61,7 +61,7 @@ const BUDGET_STATUS_STYLES: Record<string, { bg: string; text: string; label: st
   paid: { bg: "bg-emerald-500/15", text: "text-emerald-400", label: "Paid" },
   partial: { bg: "bg-amber-500/15", text: "text-amber-400", label: "Partial" },
   budget: { bg: "bg-blue-500/15", text: "text-blue-400", label: "Budget" },
-  pending: { bg: "bg-cream-400/40", text: "text-cream-500", label: "Pending" },
+  pending: { bg: "bg-carbon-700/40", text: "text-carbon-400", label: "Pending" },
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -112,10 +112,10 @@ function StatCard({
           <Icon className="w-4 h-4" style={{ color: accent || PINK }} />
         </div>
         {sub && (
-          <span className="text-[11px] font-mono text-cream-500">{sub}</span>
+          <span className="text-[11px] font-mono text-carbon-500">{sub}</span>
         )}
       </div>
-      <p className="stat-value" style={{ color: accent || "#1a1a1a" }}>
+      <p className="stat-value" style={{ color: accent || "#fff" }}>
         {value}
       </p>
       <p className="stat-label mt-1">{label}</p>
@@ -139,26 +139,26 @@ function VendorRow({
   const catColor = CATEGORY_COLORS[vendor.category] || "#94a3b8";
 
   return (
-    <div className="border-b border-cream-300/50 last:border-0">
+    <div className="border-b border-carbon-800/50 last:border-0">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-cream-200/40 transition-colors text-left"
+        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-carbon-800/30 transition-colors text-left"
       >
         {expanded ? (
-          <ChevronDown className="w-3.5 h-3.5 text-cream-500 shrink-0" />
+          <ChevronDown className="w-3.5 h-3.5 text-carbon-500 shrink-0" />
         ) : (
-          <ChevronRight className="w-3.5 h-3.5 text-cream-500 shrink-0" />
+          <ChevronRight className="w-3.5 h-3.5 text-carbon-500 shrink-0" />
         )}
         <span
           className="w-2 h-2 rounded-full shrink-0"
           style={{ backgroundColor: catColor }}
         />
-        <span className="text-sm text-cream-900 flex-1 truncate">{vendor.name}</span>
-        <span className="text-xs font-mono text-cream-500 capitalize hidden sm:inline">
+        <span className="text-sm text-white flex-1 truncate">{vendor.name}</span>
+        <span className="text-xs font-mono text-carbon-500 capitalize hidden sm:inline">
           {vendor.category.replace("_", " ")}
         </span>
         {vendor.cost_estimate && (
-          <span className="text-xs font-mono text-cream-500 hidden md:inline">
+          <span className="text-xs font-mono text-carbon-400 hidden md:inline">
             {formatCost(vendor.cost_estimate)}
           </span>
         )}
@@ -178,25 +178,25 @@ function VendorRow({
         <div className="px-4 pb-4 pl-10 space-y-2 animate-fade-in">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
             {vendor.contact_name && (
-              <div className="flex items-center gap-2 text-cream-500">
+              <div className="flex items-center gap-2 text-carbon-400">
                 <Users className="w-3 h-3" />
                 <span>{vendor.contact_name}</span>
               </div>
             )}
             {vendor.email && (
-              <div className="flex items-center gap-2 text-cream-500">
+              <div className="flex items-center gap-2 text-carbon-400">
                 <Mail className="w-3 h-3" />
                 <span>{vendor.email}</span>
               </div>
             )}
             {vendor.phone && (
-              <div className="flex items-center gap-2 text-cream-500">
+              <div className="flex items-center gap-2 text-carbon-400">
                 <Phone className="w-3 h-3" />
                 <span>{vendor.phone}</span>
               </div>
             )}
             {vendor.cost_estimate && (
-              <div className="flex items-center gap-2 text-cream-500">
+              <div className="flex items-center gap-2 text-carbon-400">
                 <DollarSign className="w-3 h-3" />
                 <span>
                   Est: {formatCost(vendor.cost_estimate)}
@@ -209,14 +209,14 @@ function VendorRow({
             <div className="text-xs text-amber-400/80 bg-amber-500/10 rounded-lg px-3 py-2 border border-amber-500/20">
               Next: {vendor.next_action}
               {vendor.next_action_date && (
-                <span className="text-cream-500 ml-1">
+                <span className="text-carbon-500 ml-1">
                   (by {new Date(vendor.next_action_date).toLocaleDateString()})
                 </span>
               )}
             </div>
           )}
           {vendor.notes && (
-            <p className="text-xs text-cream-500 leading-relaxed">{vendor.notes}</p>
+            <p className="text-xs text-carbon-500 leading-relaxed">{vendor.notes}</p>
           )}
         </div>
       )}
@@ -261,8 +261,8 @@ function AddVendorForm({ onClose, onAdded }: { onClose: () => void; onAdded: () 
         className="card p-6 w-full max-w-lg space-y-4 animate-slide-up"
       >
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-cream-900">Add Vendor</h3>
-          <button type="button" onClick={onClose} className="text-cream-500 hover:text-cream-900">
+          <h3 className="text-sm font-semibold text-white">Add Vendor</h3>
+          <button type="button" onClick={onClose} className="text-carbon-500 hover:text-white">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -273,12 +273,12 @@ function AddVendorForm({ onClose, onAdded }: { onClose: () => void; onAdded: () 
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
             required
-            className="col-span-2 bg-cream-200/60 border border-cream-300 rounded-lg px-3 py-2 text-sm text-cream-900 placeholder:text-cream-500 focus:outline-none focus:border-pink-500/50"
+            className="col-span-2 bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-carbon-600 focus:outline-none focus:border-pink-500/50"
           />
           <select
             value={form.category}
             onChange={(e) => setForm({ ...form, category: e.target.value })}
-            className="bg-cream-200/60 border border-cream-300 rounded-lg px-3 py-2 text-sm text-cream-900 focus:outline-none focus:border-pink-500/50"
+            className="bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-pink-500/50"
           >
             {VENDOR_CATEGORIES.map((c) => (
               <option key={c} value={c}>
@@ -289,7 +289,7 @@ function AddVendorForm({ onClose, onAdded }: { onClose: () => void; onAdded: () 
           <select
             value={form.status}
             onChange={(e) => setForm({ ...form, status: e.target.value })}
-            className="bg-cream-200/60 border border-cream-300 rounded-lg px-3 py-2 text-sm text-cream-900 focus:outline-none focus:border-pink-500/50"
+            className="bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-pink-500/50"
           >
             {Object.entries(VENDOR_STATUS_STYLES).map(([k, v]) => (
               <option key={k} value={k}>{v.label}</option>
@@ -299,19 +299,19 @@ function AddVendorForm({ onClose, onAdded }: { onClose: () => void; onAdded: () 
             placeholder="Contact name"
             value={form.contact_name}
             onChange={(e) => setForm({ ...form, contact_name: e.target.value })}
-            className="bg-cream-200/60 border border-cream-300 rounded-lg px-3 py-2 text-sm text-cream-900 placeholder:text-cream-500 focus:outline-none focus:border-pink-500/50"
+            className="bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-carbon-600 focus:outline-none focus:border-pink-500/50"
           />
           <input
             placeholder="Email"
             value={form.email}
             onChange={(e) => setForm({ ...form, email: e.target.value })}
-            className="bg-cream-200/60 border border-cream-300 rounded-lg px-3 py-2 text-sm text-cream-900 placeholder:text-cream-500 focus:outline-none focus:border-pink-500/50"
+            className="bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-carbon-600 focus:outline-none focus:border-pink-500/50"
           />
           <input
             placeholder="Phone"
             value={form.phone}
             onChange={(e) => setForm({ ...form, phone: e.target.value })}
-            className="bg-cream-200/60 border border-cream-300 rounded-lg px-3 py-2 text-sm text-cream-900 placeholder:text-cream-500 focus:outline-none focus:border-pink-500/50"
+            className="bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-carbon-600 focus:outline-none focus:border-pink-500/50"
           />
           <input
             placeholder="Estimated cost ($)"
@@ -319,21 +319,21 @@ function AddVendorForm({ onClose, onAdded }: { onClose: () => void; onAdded: () 
             onChange={(e) => setForm({ ...form, cost_estimate: e.target.value })}
             type="number"
             step="0.01"
-            className="bg-cream-200/60 border border-cream-300 rounded-lg px-3 py-2 text-sm text-cream-900 placeholder:text-cream-500 focus:outline-none focus:border-pink-500/50"
+            className="bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-carbon-600 focus:outline-none focus:border-pink-500/50"
           />
         </div>
         <input
           placeholder="Next action needed"
           value={form.next_action}
           onChange={(e) => setForm({ ...form, next_action: e.target.value })}
-          className="w-full bg-cream-200/60 border border-cream-300 rounded-lg px-3 py-2 text-sm text-cream-900 placeholder:text-cream-500 focus:outline-none focus:border-pink-500/50"
+          className="w-full bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-carbon-600 focus:outline-none focus:border-pink-500/50"
         />
         <textarea
           placeholder="Notes"
           value={form.notes}
           onChange={(e) => setForm({ ...form, notes: e.target.value })}
           rows={2}
-          className="w-full bg-cream-200/60 border border-cream-300 rounded-lg px-3 py-2 text-sm text-cream-900 placeholder:text-cream-500 focus:outline-none focus:border-pink-500/50 resize-none"
+          className="w-full bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-carbon-600 focus:outline-none focus:border-pink-500/50 resize-none"
         />
         <button
           type="submit"
@@ -399,8 +399,8 @@ function AddBudgetForm({
         className="card p-6 w-full max-w-lg space-y-4 animate-slide-up"
       >
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-cream-900">Add Budget Item</h3>
-          <button type="button" onClick={onClose} className="text-cream-500 hover:text-cream-900">
+          <h3 className="text-sm font-semibold text-white">Add Budget Item</h3>
+          <button type="button" onClick={onClose} className="text-carbon-500 hover:text-white">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -411,12 +411,12 @@ function AddBudgetForm({
             value={form.item}
             onChange={(e) => setForm({ ...form, item: e.target.value })}
             required
-            className="col-span-2 bg-cream-200/60 border border-cream-300 rounded-lg px-3 py-2 text-sm text-cream-900 placeholder:text-cream-500 focus:outline-none focus:border-pink-500/50"
+            className="col-span-2 bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-carbon-600 focus:outline-none focus:border-pink-500/50"
           />
           <select
             value={form.category}
             onChange={(e) => setForm({ ...form, category: e.target.value })}
-            className="bg-cream-200/60 border border-cream-300 rounded-lg px-3 py-2 text-sm text-cream-900 focus:outline-none focus:border-pink-500/50"
+            className="bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-pink-500/50"
           >
             {VENDOR_CATEGORIES.map((c) => (
               <option key={c} value={c}>
@@ -427,7 +427,7 @@ function AddBudgetForm({
           <select
             value={form.vendor_id}
             onChange={(e) => setForm({ ...form, vendor_id: e.target.value })}
-            className="bg-cream-200/60 border border-cream-300 rounded-lg px-3 py-2 text-sm text-cream-900 focus:outline-none focus:border-pink-500/50"
+            className="bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-pink-500/50"
           >
             <option value="">No linked vendor</option>
             {vendors.map((v) => (
@@ -440,7 +440,7 @@ function AddBudgetForm({
             onChange={(e) => setForm({ ...form, estimated: e.target.value })}
             type="number"
             step="0.01"
-            className="bg-cream-200/60 border border-cream-300 rounded-lg px-3 py-2 text-sm text-cream-900 placeholder:text-cream-500 focus:outline-none focus:border-pink-500/50"
+            className="bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-carbon-600 focus:outline-none focus:border-pink-500/50"
           />
           <input
             placeholder="Actual ($)"
@@ -448,18 +448,18 @@ function AddBudgetForm({
             onChange={(e) => setForm({ ...form, actual: e.target.value })}
             type="number"
             step="0.01"
-            className="bg-cream-200/60 border border-cream-300 rounded-lg px-3 py-2 text-sm text-cream-900 placeholder:text-cream-500 focus:outline-none focus:border-pink-500/50"
+            className="bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-carbon-600 focus:outline-none focus:border-pink-500/50"
           />
           <input
             type="date"
             value={form.due_date}
             onChange={(e) => setForm({ ...form, due_date: e.target.value })}
-            className="bg-cream-200/60 border border-cream-300 rounded-lg px-3 py-2 text-sm text-cream-900 focus:outline-none focus:border-pink-500/50"
+            className="bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-pink-500/50"
           />
           <select
             value={form.status}
             onChange={(e) => setForm({ ...form, status: e.target.value })}
-            className="bg-cream-200/60 border border-cream-300 rounded-lg px-3 py-2 text-sm text-cream-900 focus:outline-none focus:border-pink-500/50"
+            className="bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-pink-500/50"
           >
             <option value="budget">Budget (estimate)</option>
             <option value="pending">Pending</option>
@@ -512,8 +512,8 @@ function AddTimelineForm({ onClose, onAdded }: { onClose: () => void; onAdded: (
         className="card p-6 w-full max-w-lg space-y-4 animate-slide-up"
       >
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-cream-900">Add Timeline Event</h3>
-          <button type="button" onClick={onClose} className="text-cream-500 hover:text-cream-900">
+          <h3 className="text-sm font-semibold text-white">Add Timeline Event</h3>
+          <button type="button" onClick={onClose} className="text-carbon-500 hover:text-white">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -524,19 +524,19 @@ function AddTimelineForm({ onClose, onAdded }: { onClose: () => void; onAdded: (
             value={form.title}
             onChange={(e) => setForm({ ...form, title: e.target.value })}
             required
-            className="col-span-2 bg-cream-200/60 border border-cream-300 rounded-lg px-3 py-2 text-sm text-cream-900 placeholder:text-cream-500 focus:outline-none focus:border-pink-500/50"
+            className="col-span-2 bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-carbon-600 focus:outline-none focus:border-pink-500/50"
           />
           <input
             type="date"
             value={form.date}
             onChange={(e) => setForm({ ...form, date: e.target.value })}
             required
-            className="bg-cream-200/60 border border-cream-300 rounded-lg px-3 py-2 text-sm text-cream-900 focus:outline-none focus:border-pink-500/50"
+            className="bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-pink-500/50"
           />
           <select
             value={form.category}
             onChange={(e) => setForm({ ...form, category: e.target.value })}
-            className="bg-cream-200/60 border border-cream-300 rounded-lg px-3 py-2 text-sm text-cream-900 focus:outline-none focus:border-pink-500/50"
+            className="bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-pink-500/50"
           >
             <option value="milestone">Milestone</option>
             <option value="deadline">Deadline</option>
@@ -549,7 +549,7 @@ function AddTimelineForm({ onClose, onAdded }: { onClose: () => void; onAdded: (
           value={form.notes}
           onChange={(e) => setForm({ ...form, notes: e.target.value })}
           rows={2}
-          className="w-full bg-cream-200/60 border border-cream-300 rounded-lg px-3 py-2 text-sm text-cream-900 placeholder:text-cream-500 focus:outline-none focus:border-pink-500/50 resize-none"
+          className="w-full bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-carbon-600 focus:outline-none focus:border-pink-500/50 resize-none"
         />
         <button
           type="submit"
@@ -595,7 +595,7 @@ function TimelineRow({
             ? "border-pink-500 bg-pink-500/20"
             : isPast
             ? "border-red-400/50 hover:border-red-400"
-            : "border-cream-500 hover:border-pink-400"
+            : "border-carbon-600 hover:border-pink-400"
         )}
       >
         {item.completed && <Check className="w-3 h-3 text-pink-400" />}
@@ -603,18 +603,18 @@ function TimelineRow({
       <div className="flex-1 min-w-0">
         <p className={cn(
           "text-sm",
-          item.completed ? "text-cream-500 line-through" : "text-cream-900"
+          item.completed ? "text-carbon-500 line-through" : "text-white"
         )}>
           {item.title}
         </p>
-        <p className="text-[11px] font-mono text-cream-500 mt-0.5">
+        <p className="text-[11px] font-mono text-carbon-500 mt-0.5">
           <span className="mr-1">{categoryIcon[item.category] || "\u2606"}</span>
           {new Date(item.date).toLocaleDateString("en-US", {
             month: "short",
             day: "numeric",
             year: "numeric",
           })}
-          {item.notes && <span className="ml-2 text-cream-500">: {item.notes}</span>}
+          {item.notes && <span className="ml-2 text-carbon-600">: {item.notes}</span>}
         </p>
       </div>
       {!item.completed && isPast && (
@@ -679,15 +679,15 @@ export default function WeddingPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div>
-          <h1 className="text-2xl font-semibold text-cream-900 tracking-tight flex items-center gap-3">
+          <h1 className="text-2xl font-semibold text-white tracking-tight flex items-center gap-3">
             <Heart className="w-6 h-6 text-pink-400" />
             Wedding Planner
           </h1>
-          <p className="text-sm text-cream-500 font-mono mt-1">
-            July 12, 2026 <span className="text-cream-500">|</span> Peyton, Colorado
+          <p className="text-sm text-carbon-500 font-mono mt-1">
+            July 12, 2026 <span className="text-carbon-600">|</span> Peyton, Colorado
           </p>
         </div>
-        <div className="flex items-center gap-2 text-xs font-mono text-cream-500">
+        <div className="flex items-center gap-2 text-xs font-mono text-carbon-500">
           <MapPin className="w-3 h-3 text-pink-400" />
           Alan & Jade
         </div>
@@ -708,7 +708,7 @@ export default function WeddingPage() {
           value={formatCost(stats?.total_estimated_cents ?? 0)}
           sub={`${formatCost(stats?.total_paid_cents ?? 0)} paid`}
           icon={DollarSign}
-          accent="#d4940a"
+          accent="#ffb800"
           delay={50}
         />
         <StatCard
@@ -734,12 +734,12 @@ export default function WeddingPage() {
         {/* Vendor Tracker */}
         <div className="xl:col-span-2 space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-cream-900">Vendor Tracker</h2>
+            <h2 className="text-sm font-semibold text-white">Vendor Tracker</h2>
             <div className="flex items-center gap-2">
               <select
                 value={vendorFilter}
                 onChange={(e) => setVendorFilter(e.target.value)}
-                className="bg-cream-200/60 border border-cream-300 rounded-lg px-2 py-1 text-xs font-mono text-cream-500 focus:outline-none"
+                className="bg-carbon-800/60 border border-carbon-700 rounded-lg px-2 py-1 text-xs font-mono text-carbon-400 focus:outline-none"
               >
                 <option value="all">All categories</option>
                 {VENDOR_CATEGORIES.map((c) => (
@@ -762,7 +762,7 @@ export default function WeddingPage() {
                 <VendorRow key={v.id} vendor={v} onUpdate={refetch} />
               ))
             ) : (
-              <div className="text-center py-10 text-cream-500 text-sm">
+              <div className="text-center py-10 text-carbon-500 text-sm">
                 {vendors.length === 0
                   ? "No vendors yet. Add your first vendor to get started."
                   : "No vendors in this category."}
@@ -774,7 +774,7 @@ export default function WeddingPage() {
         {/* Timeline */}
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-cream-900">Timeline</h2>
+            <h2 className="text-sm font-semibold text-white">Timeline</h2>
             <button
               onClick={() => setShowAddTimeline(true)}
               className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-pink-500/10 border border-pink-500/30 text-pink-300 text-xs font-mono hover:bg-pink-500/20 transition-colors"
@@ -784,7 +784,7 @@ export default function WeddingPage() {
           </div>
           <div className="card p-4">
             {timeline.length > 0 ? (
-              <div className="divide-y divide-cream-300/30">
+              <div className="divide-y divide-carbon-800/30">
                 {timeline.map((item) => (
                   <TimelineRow
                     key={item.id}
@@ -794,7 +794,7 @@ export default function WeddingPage() {
                 ))}
               </div>
             ) : (
-              <div className="text-center py-8 text-cream-500 text-sm">
+              <div className="text-center py-8 text-carbon-500 text-sm">
                 No timeline events yet.
               </div>
             )}
@@ -807,15 +807,15 @@ export default function WeddingPage() {
         {/* Budget */}
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-cream-900">Budget</h2>
+            <h2 className="text-sm font-semibold text-white">Budget</h2>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => window.open("/api/wedding/budget/export", "_blank")}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cream-200/60 border border-cream-300 text-cream-500 text-xs font-mono hover:text-cream-900 transition-colors"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-carbon-800/60 border border-carbon-700 text-carbon-400 text-xs font-mono hover:text-white transition-colors"
               >
                 <Download className="w-3 h-3" /> Export
               </button>
-              <label className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cream-200/60 border border-cream-300 text-cream-500 text-xs font-mono hover:text-cream-900 transition-colors cursor-pointer">
+              <label className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-carbon-800/60 border border-carbon-700 text-carbon-400 text-xs font-mono hover:text-white transition-colors cursor-pointer">
                 <Upload className="w-3 h-3" /> Import
                 <input
                   type="file"
@@ -866,8 +866,8 @@ export default function WeddingPage() {
                     <Tooltip
                       formatter={(value: number) => formatCost(value)}
                       contentStyle={{
-                        backgroundColor: "#fffdf7",
-                        border: "1px solid #d4c9b0",
+                        backgroundColor: "#1c1c1e",
+                        border: "1px solid #333",
                         borderRadius: "8px",
                         fontSize: "12px",
                       }}
@@ -877,7 +877,7 @@ export default function WeddingPage() {
               </div>
               <div className="flex flex-wrap gap-3 justify-center mt-2">
                 {chartData.map((entry) => (
-                  <div key={entry.name} className="flex items-center gap-1.5 text-[11px] text-cream-500">
+                  <div key={entry.name} className="flex items-center gap-1.5 text-[11px] text-carbon-400">
                     <span
                       className="w-2 h-2 rounded-full"
                       style={{ backgroundColor: entry.color }}
@@ -893,19 +893,19 @@ export default function WeddingPage() {
           {stats && (
             <div className="card p-4 space-y-2">
               <div className="flex items-center justify-between text-sm">
-                <span className="text-cream-500">Budget Target</span>
-                <span className="font-mono text-cream-900">{formatCost(stats.budget_target_cents)}</span>
+                <span className="text-carbon-400">Budget Target</span>
+                <span className="font-mono text-white">{formatCost(stats.budget_target_cents)}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="text-cream-500">Allocated</span>
-                <span className="font-mono text-cream-900">{formatCost(stats.total_estimated_cents)}</span>
+                <span className="text-carbon-400">Allocated</span>
+                <span className="font-mono text-white">{formatCost(stats.total_estimated_cents)}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="text-cream-500">Paid to Date</span>
+                <span className="text-carbon-400">Paid to Date</span>
                 <span className="font-mono text-emerald-400">{formatCost(stats.total_paid_cents)}</span>
               </div>
-              <div className="flex items-center justify-between text-sm border-t border-cream-300 pt-2">
-                <span className="text-cream-500">
+              <div className="flex items-center justify-between text-sm border-t border-carbon-800 pt-2">
+                <span className="text-carbon-400">
                   {stats.total_estimated_cents > stats.budget_target_cents ? "Over Budget" : "Under Budget"}
                 </span>
                 <span className={cn(
@@ -921,7 +921,7 @@ export default function WeddingPage() {
 
           <div className="card">
             {budget.length > 0 ? (
-              <div className="divide-y divide-cream-300/50">
+              <div className="divide-y divide-carbon-800/50">
                 {budget.map((item) => {
                   const budgetStatus = item.status || (item.paid ? "paid" : "budget");
                   const bStyle = BUDGET_STATUS_STYLES[budgetStatus] || BUDGET_STATUS_STYLES.budget;
@@ -932,8 +932,8 @@ export default function WeddingPage() {
                         style={{ backgroundColor: CATEGORY_COLORS[item.category] || "#94a3b8" }}
                       />
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm text-cream-900 truncate">{item.item}</p>
-                        <p className="text-xs font-mono text-cream-500">
+                        <p className="text-sm text-white truncate">{item.item}</p>
+                        <p className="text-xs font-mono text-carbon-500">
                           {item.category.replace("_", " ")}
                           {item.due_date && (
                             <span className="ml-2">
@@ -943,7 +943,7 @@ export default function WeddingPage() {
                         </p>
                       </div>
                       <div className="text-right shrink-0 flex items-center gap-2">
-                        <p className="text-sm font-mono text-cream-900">
+                        <p className="text-sm font-mono text-white">
                           {formatCost(item.estimated_cents)}
                         </p>
                         <span className={cn("badge text-[10px]", bStyle.bg, bStyle.text)}>
@@ -954,22 +954,22 @@ export default function WeddingPage() {
                   );
                 })}
                 {/* Total row */}
-                <div className="flex items-center justify-between px-4 py-3 bg-cream-200/40">
-                  <span className="text-xs font-mono text-cream-500 uppercase tracking-wider">
+                <div className="flex items-center justify-between px-4 py-3 bg-carbon-800/30">
+                  <span className="text-xs font-mono text-carbon-400 uppercase tracking-wider">
                     Total
                   </span>
                   <div className="text-right">
-                    <p className="text-sm font-mono text-cream-900 font-semibold">
+                    <p className="text-sm font-mono text-white font-semibold">
                       {formatCost(stats?.total_estimated_cents ?? 0)}
                     </p>
-                    <p className="text-[10px] font-mono text-cream-500">
+                    <p className="text-[10px] font-mono text-carbon-500">
                       {formatCost(stats?.total_paid_cents ?? 0)} paid
                     </p>
                   </div>
                 </div>
               </div>
             ) : (
-              <div className="text-center py-8 text-cream-500 text-sm">
+              <div className="text-center py-8 text-carbon-500 text-sm">
                 No budget items yet.
               </div>
             )}
@@ -979,14 +979,14 @@ export default function WeddingPage() {
         {/* Recent Email Activity */}
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-cream-900">Agent Activity</h2>
-            <span className="text-xs font-mono text-cream-500">
+            <h2 className="text-sm font-semibold text-white">Agent Activity</h2>
+            <span className="text-xs font-mono text-carbon-500">
               {activity.length} recent events
             </span>
           </div>
           <div className="card p-4">
             {activity.length > 0 ? (
-              <div className="divide-y divide-cream-300/30 max-h-[500px] overflow-y-auto">
+              <div className="divide-y divide-carbon-800/30 max-h-[500px] overflow-y-auto">
                 {activity.map((evt) => (
                   <div key={evt.id} className="flex items-start gap-3 py-3">
                     <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-pink-500/10 mt-0.5">
@@ -997,10 +997,10 @@ export default function WeddingPage() {
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs text-cream-700 leading-relaxed line-clamp-2">
+                      <p className="text-xs text-carbon-300 leading-relaxed line-clamp-2">
                         {evt.summary}
                       </p>
-                      <p className="text-[10px] font-mono text-cream-500 mt-1">
+                      <p className="text-[10px] font-mono text-carbon-600 mt-1">
                         {evt.event_type.replace("_", " ")} : {timeAgo(evt.created_at)}
                       </p>
                     </div>
@@ -1008,7 +1008,7 @@ export default function WeddingPage() {
                 ))}
               </div>
             ) : (
-              <div className="text-center py-8 text-cream-500 text-sm">
+              <div className="text-center py-8 text-carbon-500 text-sm">
                 No agent activity yet. The wedding planner will show email triage summaries here.
               </div>
             )}

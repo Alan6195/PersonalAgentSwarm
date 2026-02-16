@@ -26,38 +26,38 @@ export function timeAgo(date: string | Date): string {
 
 export function statusColor(status: string): string {
   const map: Record<string, string> = {
-    idle: "text-cream-400",
-    active: "text-accent-green",
-    error: "text-accent-red",
-    disabled: "text-cream-500",
-    pending: "text-cream-500",
-    in_progress: "text-accent-blue",
-    delegated: "text-accent-purple",
-    completed: "text-accent-green",
-    failed: "text-accent-red",
-    cancelled: "text-cream-500",
-    running: "text-accent-blue",
-    success: "text-accent-green",
+    idle: "text-carbon-400",
+    active: "text-neon-green",
+    error: "text-neon-red",
+    disabled: "text-carbon-600",
+    pending: "text-carbon-400",
+    in_progress: "text-neon-blue",
+    delegated: "text-neon-purple",
+    completed: "text-neon-green",
+    failed: "text-neon-red",
+    cancelled: "text-carbon-600",
+    running: "text-neon-blue",
+    success: "text-neon-green",
   };
-  return map[status] || "text-cream-500";
+  return map[status] || "text-carbon-400";
 }
 
 export function priorityColor(priority: string): string {
   const map: Record<string, string> = {
-    urgent: "text-accent-red",
-    high: "text-accent-amber",
-    normal: "text-cream-700",
-    low: "text-cream-500",
+    urgent: "text-neon-red",
+    high: "text-neon-amber",
+    normal: "text-carbon-300",
+    low: "text-carbon-500",
   };
-  return map[priority] || "text-cream-500";
+  return map[priority] || "text-carbon-400";
 }
 
 export function priorityBg(priority: string): string {
   const map: Record<string, string> = {
-    urgent: "bg-accent-red/10 border-accent-red/20",
-    high: "bg-accent-amber/10 border-accent-amber/20",
-    normal: "bg-cream-100 border-cream-300",
-    low: "bg-cream-50 border-cream-200",
+    urgent: "bg-neon-red/10 border-neon-red/30",
+    high: "bg-neon-amber/10 border-neon-amber/30",
+    normal: "bg-carbon-800/50 border-carbon-700",
+    low: "bg-carbon-900/50 border-carbon-800",
   };
-  return map[priority] || "bg-cream-100 border-cream-300";
+  return map[priority] || "bg-carbon-800/50 border-carbon-700";
 }
