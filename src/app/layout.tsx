@@ -13,8 +13,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark">
-      <body className="noise">
+    <html lang="en">
+      <body>
         <AppShell>{children}</AppShell>
       </body>
     </html>

@@ -70,8 +70,8 @@ const CHANNEL_COLORS: Record<string, string> = {
 function CustomTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-carbon-900 border border-carbon-700 rounded-lg px-3 py-2 shadow-xl">
-      <p className="text-xs font-mono text-carbon-400 mb-1">{label}</p>
+    <div className="bg-white border border-cream-400 rounded-lg px-3 py-2 shadow-xl">
+      <p className="text-xs font-mono text-cream-500 mb-1">{label}</p>
       {payload.map((p: any, i: number) => (
         <p key={i} className="text-xs font-mono" style={{ color: p.color }}>
           {p.name}: {p.value}
@@ -114,10 +114,10 @@ export default function AnalyticsPage() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-white tracking-tight">
+          <h1 className="text-2xl font-semibold text-cream-900 tracking-tight">
             Analytics
           </h1>
-          <p className="text-sm text-carbon-500 font-mono mt-1">
+          <p className="text-sm text-cream-500 font-mono mt-1">
             System performance and activity
           </p>
         </div>
@@ -129,8 +129,8 @@ export default function AnalyticsPage() {
               className={cn(
                 "px-3 py-1.5 rounded-lg text-xs font-mono transition-colors",
                 days === d
-                  ? "bg-carbon-800 text-white border border-carbon-600"
-                  : "text-carbon-500 hover:text-carbon-300"
+                  ? "bg-cream-300 text-cream-900 border border-cream-500"
+                  : "text-cream-500 hover:text-cream-700"
               )}
             >
               {d}d
@@ -141,8 +141,8 @@ export default function AnalyticsPage() {
 
       {/* Task Throughput */}
       <div className="card p-6">
-        <h2 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-          <BarChart3 className="w-4 h-4 text-neon-blue" />
+        <h2 className="text-sm font-semibold text-cream-900 mb-4 flex items-center gap-2">
+          <BarChart3 className="w-4 h-4 text-accent-blue" />
           Task Throughput
         </h2>
         <div className="h-56">
@@ -163,14 +163,14 @@ export default function AnalyticsPage() {
               <Bar
                 dataKey="completed"
                 name="Completed"
-                fill="#00ff9d"
+                fill="#3d9970"
                 radius={[3, 3, 0, 0]}
                 opacity={0.7}
               />
               <Bar
                 dataKey="failed"
                 name="Failed"
-                fill="#ff3d5a"
+                fill="#d9534f"
                 radius={[3, 3, 0, 0]}
                 opacity={0.7}
               />
@@ -182,8 +182,8 @@ export default function AnalyticsPage() {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         {/* Agent Performance */}
         <div className="card p-6">
-          <h2 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-            <Activity className="w-4 h-4 text-neon-green" />
+          <h2 className="text-sm font-semibold text-cream-900 mb-4 flex items-center gap-2">
+            <Activity className="w-4 h-4 text-accent-green" />
             Agent Performance
           </h2>
           <div className="space-y-3">
@@ -203,32 +203,32 @@ export default function AnalyticsPage() {
                 return (
                   <div
                     key={agent.id}
-                    className="flex items-center gap-4 py-2.5 px-3 rounded-lg hover:bg-carbon-800/30 transition-colors"
+                    className="flex items-center gap-4 py-2.5 px-3 rounded-lg hover:bg-cream-200/40 transition-colors"
                   >
                     <span
                       className="w-2.5 h-2.5 rounded-full shrink-0"
                       style={{ backgroundColor: agent.color }}
                     />
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm text-carbon-200">{agent.name}</p>
+                      <p className="text-sm text-cream-800">{agent.name}</p>
                     </div>
                     <div className="flex items-center gap-3 sm:gap-5 text-xs font-mono flex-wrap">
-                      <span className="text-carbon-400">
+                      <span className="text-cream-500">
                         {agent.total} tasks
                       </span>
                       <span
                         className={cn(
                           successRate >= 90
-                            ? "text-neon-green"
+                            ? "text-accent-green"
                             : successRate >= 70
-                            ? "text-neon-amber"
-                            : "text-neon-red"
+                            ? "text-accent-amber"
+                            : "text-accent-red"
                         )}
                       >
                         {successRate}%
                       </span>
-                      <span className="text-carbon-500">{avgDuration}s avg</span>
-                      <span className="text-carbon-500">
+                      <span className="text-cream-500">{avgDuration}s avg</span>
+                      <span className="text-cream-500">
                         {formatTokens(Number(agent.avg_tokens) || 0)} avg tokens
                       </span>
                     </div>
@@ -237,7 +237,7 @@ export default function AnalyticsPage() {
               })}
             {(!data?.tasksByAgent ||
               data.tasksByAgent.filter((a) => Number(a.total) > 0).length === 0) && (
-              <p className="text-xs text-carbon-600 text-center py-8 font-mono">
+              <p className="text-xs text-cream-500 text-center py-8 font-mono">
                 No agent activity yet
               </p>
             )}
@@ -246,8 +246,8 @@ export default function AnalyticsPage() {
 
         {/* Delegation Flow */}
         <div className="card p-6">
-          <h2 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-            <GitBranch className="w-4 h-4 text-neon-purple" />
+          <h2 className="text-sm font-semibold text-cream-900 mb-4 flex items-center gap-2">
+            <GitBranch className="w-4 h-4 text-accent-purple" />
             Delegation Flow
           </h2>
           {data?.delegations && data.delegations.length > 0 ? (
@@ -255,24 +255,24 @@ export default function AnalyticsPage() {
               {data.delegations.map((d, i) => (
                 <div
                   key={i}
-                  className="flex items-center gap-3 py-2 px-3 rounded-lg hover:bg-carbon-800/30 transition-colors"
+                  className="flex items-center gap-3 py-2 px-3 rounded-lg hover:bg-cream-200/40 transition-colors"
                 >
-                  <span className="text-xs font-mono text-carbon-300 w-20 sm:w-28 truncate">
+                  <span className="text-xs font-mono text-cream-700 w-20 sm:w-28 truncate">
                     {AGENT_NAMES[d.from_agent] || d.from_agent}
                   </span>
-                  <ArrowRight className="w-3 h-3 text-neon-purple shrink-0" />
-                  <span className="text-xs font-mono text-carbon-300 w-20 sm:w-28 truncate">
+                  <ArrowRight className="w-3 h-3 text-accent-purple shrink-0" />
+                  <span className="text-xs font-mono text-cream-700 w-20 sm:w-28 truncate">
                     {AGENT_NAMES[d.to_agent] || d.to_agent}
                   </span>
                   <div className="flex-1" />
-                  <span className="text-xs font-mono text-neon-purple">
+                  <span className="text-xs font-mono text-accent-purple">
                     {d.count}x
                   </span>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-xs text-carbon-600 text-center py-8 font-mono">
+            <p className="text-xs text-cream-500 text-center py-8 font-mono">
               No delegations yet
             </p>
           )}
@@ -280,8 +280,8 @@ export default function AnalyticsPage() {
           {/* Channel Breakdown */}
           {data?.channelBreakdown && data.channelBreakdown.length > 0 && (
             <>
-              <div className="border-t border-carbon-800/50 my-5" />
-              <h3 className="text-xs font-semibold text-carbon-400 mb-3 flex items-center gap-2">
+              <div className="border-t border-cream-300/50 my-5" />
+              <h3 className="text-xs font-semibold text-cream-500 mb-3 flex items-center gap-2">
                 <Radio className="w-3 h-3" />
                 By Channel
               </h3>
@@ -295,10 +295,10 @@ export default function AnalyticsPage() {
                           CHANNEL_COLORS[ch.channel] || "#737384",
                       }}
                     />
-                    <span className="text-xs font-mono text-carbon-400 capitalize">
+                    <span className="text-xs font-mono text-cream-500 capitalize">
                       {ch.channel}
                     </span>
-                    <span className="text-xs font-mono text-carbon-600">
+                    <span className="text-xs font-mono text-cream-500">
                       {ch.count}
                     </span>
                   </div>
@@ -311,14 +311,14 @@ export default function AnalyticsPage() {
 
       {/* Activity Feed */}
       <div className="card p-6">
-        <h2 className="text-sm font-semibold text-white mb-4">
+        <h2 className="text-sm font-semibold text-cream-900 mb-4">
           Activity Feed
         </h2>
         <div className="space-y-1 max-h-96 overflow-auto">
           {data?.activity.map((event) => (
             <div
               key={event.id}
-              className="flex items-start gap-3 py-2.5 px-3 rounded-lg hover:bg-carbon-800/20 transition-colors"
+              className="flex items-start gap-3 py-2.5 px-3 rounded-lg hover:bg-cream-200/40 transition-colors"
             >
               {event.agent_color ? (
                 <span
@@ -326,28 +326,28 @@ export default function AnalyticsPage() {
                   style={{ backgroundColor: event.agent_color }}
                 />
               ) : (
-                <span className="w-2 h-2 rounded-full mt-1.5 shrink-0 bg-carbon-600" />
+                <span className="w-2 h-2 rounded-full mt-1.5 shrink-0 bg-cream-500" />
               )}
               <div className="flex-1 min-w-0">
-                <p className="text-sm text-carbon-300">{event.summary}</p>
+                <p className="text-sm text-cream-700">{event.summary}</p>
                 <div className="flex items-center gap-3 mt-0.5">
-                  <span className="text-[10px] font-mono text-carbon-600">
+                  <span className="text-[10px] font-mono text-cream-500">
                     {event.agent_name || "system"}
                   </span>
                   {event.channel && (
-                    <span className="text-[10px] font-mono text-carbon-600 capitalize">
+                    <span className="text-[10px] font-mono text-cream-500 capitalize">
                       via {event.channel}
                     </span>
                   )}
                 </div>
               </div>
-              <span className="text-[10px] font-mono text-carbon-600 shrink-0">
+              <span className="text-[10px] font-mono text-cream-500 shrink-0">
                 {timeAgo(event.created_at)}
               </span>
             </div>
           ))}
           {data?.activity.length === 0 && (
-            <p className="text-xs text-carbon-600 text-center py-8 font-mono">
+            <p className="text-xs text-cream-500 text-center py-8 font-mono">
               No activity yet. The system is waiting.
             </p>
           )}
@@ -356,7 +356,7 @@ export default function AnalyticsPage() {
               {[...Array(8)].map((_, i) => (
                 <div
                   key={i}
-                  className="h-12 bg-carbon-800/20 rounded animate-pulse"
+                  className="h-12 bg-cream-200/40 rounded animate-pulse"
                 />
               ))}
             </div>

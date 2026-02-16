@@ -52,16 +52,16 @@ interface CostData {
 }
 
 const MODEL_COLORS: Record<string, string> = {
-  opus: "#a855f7",
-  sonnet: "#00d4ff",
+  opus: "#8b5cf6",
+  sonnet: "#4a8fe7",
   haiku: "#22c55e",
 };
 
 function CustomTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-carbon-900 border border-carbon-700 rounded-lg px-3 py-2 shadow-xl">
-      <p className="text-xs font-mono text-carbon-400 mb-1">{label}</p>
+    <div className="bg-white border border-cream-400 rounded-lg px-3 py-2 shadow-xl">
+      <p className="text-xs font-mono text-cream-500 mb-1">{label}</p>
       {payload.map((p: any, i: number) => (
         <p key={i} className="text-xs font-mono" style={{ color: p.color }}>
           {p.name}: {typeof p.value === "number" && p.dataKey?.includes("cost")
@@ -99,10 +99,10 @@ export default function CostTrackerPage() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-white tracking-tight">
+          <h1 className="text-2xl font-semibold text-cream-900 tracking-tight">
             Cost Tracker
           </h1>
-          <p className="text-sm text-carbon-500 font-mono mt-1">
+          <p className="text-sm text-cream-500 font-mono mt-1">
             API spend and token usage
           </p>
         </div>
@@ -114,8 +114,8 @@ export default function CostTrackerPage() {
               className={cn(
                 "px-3 py-1.5 rounded-lg text-xs font-mono transition-colors",
                 days === d
-                  ? "bg-carbon-800 text-white border border-carbon-600"
-                  : "text-carbon-500 hover:text-carbon-300"
+                  ? "bg-cream-300 text-cream-900 border border-cream-500"
+                  : "text-cream-500 hover:text-cream-700"
               )}
             >
               {d}d
@@ -127,24 +127,24 @@ export default function CostTrackerPage() {
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="card-glow p-5">
-          <DollarSign className="w-4 h-4 text-neon-amber mb-3" />
-          <p className="stat-value text-neon-amber">{formatCost(totalCost)}</p>
+          <DollarSign className="w-4 h-4 text-accent-amber mb-3" />
+          <p className="stat-value text-accent-amber">{formatCost(totalCost)}</p>
           <p className="stat-label mt-1">{days}-Day Total</p>
         </div>
         <div className="card-glow p-5">
-          <TrendingUp className="w-4 h-4 text-carbon-400 mb-3" />
+          <TrendingUp className="w-4 h-4 text-cream-500 mb-3" />
           <p className="stat-value">{formatCost(avgDailyCost)}</p>
           <p className="stat-label mt-1">Avg / Day</p>
         </div>
         <div className="card-glow p-5">
-          <Zap className="w-4 h-4 text-neon-purple mb-3" />
-          <p className="stat-value text-neon-purple">
+          <Zap className="w-4 h-4 text-accent-purple mb-3" />
+          <p className="stat-value text-accent-purple">
             {formatTokens(totalTokens)}
           </p>
           <p className="stat-label mt-1">{days}-Day Tokens</p>
         </div>
         <div className="card-glow p-5">
-          <BarChart3 className="w-4 h-4 text-neon-blue mb-3" />
+          <BarChart3 className="w-4 h-4 text-accent-blue mb-3" />
           <p className="stat-value">
             {formatCost(totalCost / (days / 30))}
           </p>
@@ -154,7 +154,7 @@ export default function CostTrackerPage() {
 
       {/* Daily Cost Chart */}
       <div className="card p-6">
-        <h2 className="text-sm font-semibold text-white mb-4">
+        <h2 className="text-sm font-semibold text-cream-900 mb-4">
           Daily Spend (Stacked by Model)
         </h2>
         <div className="h-72">
@@ -162,12 +162,12 @@ export default function CostTrackerPage() {
             <AreaChart data={chartData}>
               <defs>
                 <linearGradient id="gradOpus" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#a855f7" stopOpacity={0.3} />
-                  <stop offset="100%" stopColor="#a855f7" stopOpacity={0.05} />
+                  <stop offset="0%" stopColor="#8b5cf6" stopOpacity={0.3} />
+                  <stop offset="100%" stopColor="#8b5cf6" stopOpacity={0.05} />
                 </linearGradient>
                 <linearGradient id="gradSonnet" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#00d4ff" stopOpacity={0.3} />
-                  <stop offset="100%" stopColor="#00d4ff" stopOpacity={0.05} />
+                  <stop offset="0%" stopColor="#4a8fe7" stopOpacity={0.3} />
+                  <stop offset="100%" stopColor="#4a8fe7" stopOpacity={0.05} />
                 </linearGradient>
                 <linearGradient id="gradHaiku" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#22c55e" stopOpacity={0.3} />
@@ -192,7 +192,7 @@ export default function CostTrackerPage() {
                 dataKey="opus"
                 name="Opus"
                 stackId="1"
-                stroke="#a855f7"
+                stroke="#8b5cf6"
                 fill="url(#gradOpus)"
                 strokeWidth={1.5}
               />
@@ -201,7 +201,7 @@ export default function CostTrackerPage() {
                 dataKey="sonnet"
                 name="Sonnet"
                 stackId="1"
-                stroke="#00d4ff"
+                stroke="#4a8fe7"
                 fill="url(#gradSonnet)"
                 strokeWidth={1.5}
               />
@@ -223,7 +223,7 @@ export default function CostTrackerPage() {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         {/* Cost by Agent */}
         <div className="card p-6">
-          <h2 className="text-sm font-semibold text-white mb-4">
+          <h2 className="text-sm font-semibold text-cream-900 mb-4">
             Spend by Agent
           </h2>
           <div className="space-y-3">
@@ -242,20 +242,20 @@ export default function CostTrackerPage() {
                           className="w-2 h-2 rounded-full"
                           style={{ backgroundColor: agent.color }}
                         />
-                        <span className="text-sm text-carbon-300">
+                        <span className="text-sm text-cream-700">
                           {agent.name}
                         </span>
                       </div>
                       <div className="flex items-center gap-3">
-                        <span className="text-xs font-mono text-carbon-500">
+                        <span className="text-xs font-mono text-cream-500">
                           {formatTokens(agent.total_tokens)} tokens
                         </span>
-                        <span className="text-xs font-mono text-white">
+                        <span className="text-xs font-mono text-cream-900">
                           {formatCost(agent.total_cost)}
                         </span>
                       </div>
                     </div>
-                    <div className="w-full h-1.5 bg-carbon-800 rounded-full overflow-hidden">
+                    <div className="w-full h-1.5 bg-cream-300 rounded-full overflow-hidden">
                       <div
                         className="h-full rounded-full transition-all duration-500"
                         style={{
@@ -269,7 +269,7 @@ export default function CostTrackerPage() {
                 );
               })}
             {data?.byAgent.filter((a) => a.total_cost > 0).length === 0 && (
-              <p className="text-xs text-carbon-600 text-center py-8 font-mono">
+              <p className="text-xs text-cream-500 text-center py-8 font-mono">
                 No cost data yet
               </p>
             )}
@@ -278,7 +278,7 @@ export default function CostTrackerPage() {
 
         {/* Cost by Model */}
         <div className="card p-6">
-          <h2 className="text-sm font-semibold text-white mb-4">
+          <h2 className="text-sm font-semibold text-cream-900 mb-4">
             Spend by Model
           </h2>
           <div className="flex items-center justify-center h-48">
@@ -310,7 +310,7 @@ export default function CostTrackerPage() {
                 </PieChart>
               </ResponsiveContainer>
             ) : (
-              <p className="text-xs text-carbon-600 font-mono">
+              <p className="text-xs text-cream-500 font-mono">
                 No model data yet
               </p>
             )}
@@ -325,10 +325,10 @@ export default function CostTrackerPage() {
                       backgroundColor: MODEL_COLORS[m.model] || "#666",
                     }}
                   />
-                  <span className="text-xs font-mono text-carbon-400 capitalize">
+                  <span className="text-xs font-mono text-cream-500 capitalize">
                     {m.model}
                   </span>
-                  <span className="text-xs font-mono text-carbon-600">
+                  <span className="text-xs font-mono text-cream-500">
                     {formatCost(m.total_cost)}
                   </span>
                 </div>

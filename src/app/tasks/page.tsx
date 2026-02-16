@@ -29,36 +29,36 @@ const STATUS_COLUMNS = [
     key: "pending",
     label: "Pending",
     icon: Clock,
-    accent: "text-carbon-400",
-    border: "border-carbon-700",
+    accent: "text-cream-500",
+    border: "border-cream-300",
   },
   {
     key: "in_progress",
     label: "In Progress",
     icon: Play,
-    accent: "text-neon-blue",
-    border: "border-neon-blue/30",
+    accent: "text-accent-blue",
+    border: "border-accent-blue/30",
   },
   {
     key: "delegated",
     label: "Delegated",
     icon: ArrowUpRight,
-    accent: "text-neon-purple",
-    border: "border-neon-purple/30",
+    accent: "text-accent-purple",
+    border: "border-accent-purple/30",
   },
   {
     key: "completed",
     label: "Completed",
     icon: CheckCircle2,
-    accent: "text-neon-green",
-    border: "border-neon-green/30",
+    accent: "text-accent-green",
+    border: "border-accent-green/30",
   },
   {
     key: "failed",
     label: "Failed",
     icon: XCircle,
-    accent: "text-neon-red",
-    border: "border-neon-red/30",
+    accent: "text-accent-red",
+    border: "border-accent-red/30",
   },
 ];
 
@@ -68,7 +68,7 @@ function TaskCard({ task }: { task: Task }) {
   return (
     <div
       className={cn(
-        "rounded-lg p-3.5 border cursor-pointer transition-all hover:border-carbon-600",
+        "rounded-lg p-3.5 border cursor-pointer transition-all hover:border-cream-400",
         priorityBg(task.priority)
       )}
       onClick={() => setExpanded(!expanded)}
@@ -81,7 +81,7 @@ function TaskCard({ task }: { task: Task }) {
           />
         )}
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-carbon-100 leading-snug">
+          <p className="text-sm font-medium text-cream-800 leading-snug">
             {task.title}
           </p>
         </div>
@@ -92,39 +92,39 @@ function TaskCard({ task }: { task: Task }) {
           {task.priority}
         </span>
         {task.agent_name && (
-          <span className="text-[10px] font-mono text-carbon-500">
+          <span className="text-[10px] font-mono text-cream-500">
             {task.agent_name}
           </span>
         )}
-        <span className="text-[10px] font-mono text-carbon-600 ml-auto">
+        <span className="text-[10px] font-mono text-cream-500 ml-auto">
           {timeAgo(task.created_at)}
         </span>
       </div>
 
       {expanded && (
-        <div className="mt-3 pt-3 border-t border-carbon-800/50 space-y-2">
+        <div className="mt-3 pt-3 border-t border-cream-200 space-y-2">
           {task.description && (
-            <p className="text-xs text-carbon-400 leading-relaxed">
+            <p className="text-xs text-cream-500 leading-relaxed">
               {task.description}
             </p>
           )}
           {task.output_summary && (
-            <div className="bg-carbon-950/50 rounded p-2">
-              <p className="text-[10px] font-mono text-carbon-500 mb-1">
+            <div className="bg-cream-100/50 rounded p-2">
+              <p className="text-[10px] font-mono text-cream-500 mb-1">
                 Output:
               </p>
-              <p className="text-xs text-carbon-300">{task.output_summary}</p>
+              <p className="text-xs text-cream-700">{task.output_summary}</p>
             </div>
           )}
           {task.error_message && (
-            <div className="bg-neon-red/5 rounded p-2">
-              <p className="text-[10px] font-mono text-neon-red mb-1">
+            <div className="bg-accent-red/5 rounded p-2">
+              <p className="text-[10px] font-mono text-accent-red mb-1">
                 Error:
               </p>
-              <p className="text-xs text-neon-red/80">{task.error_message}</p>
+              <p className="text-xs text-accent-red/80">{task.error_message}</p>
             </div>
           )}
-          <div className="flex items-center gap-4 text-[10px] font-mono text-carbon-600">
+          <div className="flex items-center gap-4 text-[10px] font-mono text-cream-500">
             {task.tokens_used > 0 && (
               <span>{formatTokens(task.tokens_used)} tokens</span>
             )}
@@ -171,10 +171,10 @@ export default function TaskBoardPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-white tracking-tight">
+          <h1 className="text-2xl font-semibold text-cream-900 tracking-tight">
             Task Board
           </h1>
-          <p className="text-sm text-carbon-500 font-mono mt-1">
+          <p className="text-sm text-cream-500 font-mono mt-1">
             {tasks?.length ?? 0} tasks
           </p>
         </div>
@@ -182,7 +182,7 @@ export default function TaskBoardPage() {
           <select
             value={filterAgent}
             onChange={(e) => setFilterAgent(e.target.value)}
-            className="bg-carbon-900 border border-carbon-700 rounded-lg px-3 py-1.5 text-xs font-mono text-carbon-300 focus:outline-none focus:border-carbon-500"
+            className="bg-white border border-cream-300 rounded-lg px-3 py-1.5 text-xs font-mono text-cream-700 focus:outline-none focus:border-cream-500"
           >
             <option value="">All agents</option>
             <option value="alan-os">Alan OS</option>
@@ -197,7 +197,7 @@ export default function TaskBoardPage() {
           <select
             value={filterPriority}
             onChange={(e) => setFilterPriority(e.target.value)}
-            className="bg-carbon-900 border border-carbon-700 rounded-lg px-3 py-1.5 text-xs font-mono text-carbon-300 focus:outline-none focus:border-carbon-500"
+            className="bg-white border border-cream-300 rounded-lg px-3 py-1.5 text-xs font-mono text-cream-700 focus:outline-none focus:border-cream-500"
           >
             <option value="">All priorities</option>
             <option value="urgent">Urgent</option>
@@ -224,12 +224,12 @@ export default function TaskBoardPage() {
               <span className={cn("text-sm font-medium", col.accent)}>
                 {col.label}
               </span>
-              <span className="text-xs font-mono text-carbon-600 ml-auto">
+              <span className="text-xs font-mono text-cream-500 ml-auto">
                 {col.tasks.length}
               </span>
               <ChevronDown
                 className={cn(
-                  "w-4 h-4 text-carbon-500 xl:hidden transition-transform",
+                  "w-4 h-4 text-cream-500 xl:hidden transition-transform",
                   !collapsedCols.has(col.key) && "rotate-180"
                 )}
               />
@@ -246,8 +246,8 @@ export default function TaskBoardPage() {
                 <TaskCard key={task.id} task={task} />
               ))}
               {col.tasks.length === 0 && (
-                <div className="rounded-lg border border-dashed border-carbon-800 p-6 text-center">
-                  <p className="text-xs text-carbon-600 font-mono">Empty</p>
+                <div className="rounded-lg border border-dashed border-cream-300 p-6 text-center">
+                  <p className="text-xs text-cream-500 font-mono">Empty</p>
                 </div>
               )}
             </div>
