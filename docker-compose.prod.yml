@@ -66,6 +66,7 @@ services:
     volumes:
       - /opt/mission-control:/opt/mission-control
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./agent-service/data/souls:/app/data/souls
       - agent_memory:/app/data/memory
     depends_on:
       db:
