@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { category, item, estimated_cents, actual_cents, paid, vendor_id, due_date, notes } = body;
+    const { category, item, estimated_cents, actual_cents, paid, status, vendor_id, due_date, notes } = body;
 
     if (!category || !item) {
       return NextResponse.json(
@@ -15,13 +15,16 @@ export async function POST(request: Request) {
       );
     }
 
+    const effectiveStatus = status || (paid ? "paid" : "budget");
+    const effectivePaid = effectiveStatus === "paid" || paid || false;
+
     const [row] = await query(
-      `INSERT INTO wedding_budget (category, item, estimated_cents, actual_cents, paid, vendor_id, due_date, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO wedding_budget (category, item, estimated_cents, actual_cents, paid, status, vendor_id, due_date, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *`,
       [
         category, item,
-        estimated_cents || 0, actual_cents || 0, paid || false,
+        estimated_cents || 0, actual_cents || 0, effectivePaid, effectiveStatus,
         vendor_id || null, due_date || null, notes || null,
       ]
     );
@@ -51,7 +54,7 @@ export async function PATCH(request: Request) {
 
     const allowedFields = [
       "category", "item", "estimated_cents", "actual_cents",
-      "paid", "vendor_id", "due_date", "notes",
+      "paid", "status", "vendor_id", "due_date", "notes",
     ];
 
     for (const key of allowedFields) {

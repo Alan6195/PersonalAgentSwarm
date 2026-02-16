@@ -134,16 +134,18 @@ export async function processWeddingDataActions(
             replacement = '\n\n(Error: add_budget requires item)';
             break;
           }
+          const effectiveStatus = fields.status || (fields.paid === 'true' ? 'paid' : 'budget');
           const [budget] = await query(
-            `INSERT INTO wedding_budget (category, item, estimated_cents, actual_cents, paid, vendor_id, due_date, notes)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            `INSERT INTO wedding_budget (category, item, estimated_cents, actual_cents, paid, status, vendor_id, due_date, notes)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
              RETURNING id, item`,
             [
               category,
               item,
               fields.estimated ? Math.round(parseFloat(fields.estimated) * 100) : 0,
               fields.actual ? Math.round(parseFloat(fields.actual) * 100) : 0,
-              fields.paid === 'true',
+              effectiveStatus === 'paid',
+              effectiveStatus,
               fields.vendor_id ? parseInt(fields.vendor_id) : null,
               fields.due_date || null,
               fields.notes || null,
@@ -152,6 +154,79 @@ export async function processWeddingDataActions(
           replacement = `\n\nAdded budget item: ${budget.item} [ID: ${budget.id}]`;
           actions.push(`add_budget: ${item}`);
           console.log(`[WeddingData] Added budget item: ${item}`);
+          break;
+        }
+
+        case 'update_budget': {
+          const id = fields.budget_id || fields.id;
+          if (!id) {
+            replacement = '\n\n(Error: update_budget requires budget_id)';
+            break;
+          }
+
+          const setClauses: string[] = [];
+          const values: any[] = [];
+          let idx = 1;
+
+          const budgetFields: Record<string, { col: string; transform: (v: string) => any }> = {
+            category: { col: 'category', transform: (v) => v },
+            item: { col: 'item', transform: (v) => v },
+            estimated: { col: 'estimated_cents', transform: (v) => Math.round(parseFloat(v) * 100) },
+            actual: { col: 'actual_cents', transform: (v) => Math.round(parseFloat(v) * 100) },
+            estimated_cents: { col: 'estimated_cents', transform: (v) => parseInt(v) },
+            actual_cents: { col: 'actual_cents', transform: (v) => parseInt(v) },
+            status: { col: 'status', transform: (v) => v },
+            paid: { col: 'paid', transform: (v) => v === 'true' },
+            vendor_id: { col: 'vendor_id', transform: (v) => parseInt(v) },
+            due_date: { col: 'due_date', transform: (v) => v },
+            notes: { col: 'notes', transform: (v) => v },
+          };
+
+          for (const [key, def] of Object.entries(budgetFields)) {
+            if (fields[key] !== undefined) {
+              setClauses.push(`${def.col} = $${idx++}`);
+              values.push(def.transform(fields[key]));
+            }
+          }
+
+          // Sync paid boolean with status if status is being set
+          if (fields.status && !fields.paid) {
+            setClauses.push(`paid = $${idx++}`);
+            values.push(fields.status === 'paid');
+          }
+
+          if (setClauses.length === 0) {
+            replacement = '\n\n(Error: update_budget has no fields to update)';
+            break;
+          }
+
+          values.push(parseInt(id));
+
+          const [updated] = await query(
+            `UPDATE wedding_budget SET ${setClauses.join(', ')} WHERE id = $${idx} RETURNING id, item, status`,
+            values
+          );
+
+          if (updated) {
+            replacement = `\n\nUpdated budget #${updated.id}: ${updated.item} (${updated.status})`;
+            actions.push(`update_budget: #${id}`);
+            console.log(`[WeddingData] Updated budget #${id}`);
+          } else {
+            replacement = `\n\n(Budget #${id} not found)`;
+          }
+          break;
+        }
+
+        case 'list_budget': {
+          const budgetItems = await query(
+            `SELECT id, category, item, estimated_cents, actual_cents, status, notes
+             FROM wedding_budget ORDER BY category, item`
+          );
+          const formatted = (budgetItems as any[]).map((b: any) =>
+            `- [${b.id}] ${b.item} (${b.category}): est $${(b.estimated_cents / 100).toFixed(2)}, actual $${(b.actual_cents / 100).toFixed(2)}, ${b.status || 'budget'}${b.notes ? ` | ${b.notes}` : ''}`
+          ).join('\n');
+          replacement = `\n\nWedding Budget (${budgetItems.length} items):\n${formatted || '(none)'}`;
+          actions.push('list_budget');
           break;
         }
 

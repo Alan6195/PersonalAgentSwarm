@@ -128,7 +128,9 @@ export interface WeddingBudgetItem {
   estimated_cents: number;
   actual_cents: number;
   paid: boolean;
+  status: "paid" | "partial" | "budget" | "pending";
   vendor_id: number | null;
+  vendor_name?: string;
   due_date: string | null;
   notes: string | null;
   created_at: string;
@@ -154,6 +156,7 @@ export interface WeddingDashboardData {
     total_estimated_cents: number;
     total_actual_cents: number;
     total_paid_cents: number;
+    budget_target_cents: number;
     vendors_booked: number;
     vendors_total: number;
     upcoming_deadlines: number;

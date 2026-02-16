@@ -187,9 +187,26 @@ action: add_budget
 category: photography
 item: Photography package (8 hours)
 estimated: 2800.00
+status: budget
 vendor_id: 3
 due_date: 2026-04-01
 notes: 50% deposit required at booking
+[/WEDDING_DATA]
+
+Budget statuses: paid, partial, budget, pending
+
+**Update an existing budget item** (when a quote comes in, payment is made, etc.):
+[WEDDING_DATA]
+action: update_budget
+budget_id: 5
+actual: 2800.00
+status: partial
+notes: 50% deposit paid Feb 15. Remaining due 4 weeks before wedding.
+[/WEDDING_DATA]
+
+**List current budget** (to check what's already tracked before adding):
+[WEDDING_DATA]
+action: list_budget
 [/WEDDING_DATA]
 
 **Add a timeline event**:
@@ -215,11 +232,42 @@ timeline_id: 5
 - A new vendor is mentioned in email correspondence (add_vendor)
 - A vendor sends pricing or a quote (update_vendor with cost_estimate, status to "quoted")
 - A vendor is booked or confirmed (update_vendor with status to "booked")
-- A payment is made or due date is mentioned (add_budget)
+- A payment is made or due date is mentioned (update_budget with status and actual amount)
+- An invoice or quote email arrives (update_budget with actual amount and status to "partial" or update estimated)
+- A payment confirmation arrives (update_budget with status to "paid", actual to paid amount)
+- A vendor provides updated pricing (update_budget with new estimated amount)
 - A new deadline or appointment is discovered (add_timeline)
 - A vendor's status changes for any reason (update_vendor)
 
 Before adding a vendor, use list_vendors to check if they already exist. If they do, use update_vendor instead.
+Before adding a budget item, use list_budget to check if it already exists. If it does, use update_budget instead.
 
-The dashboard is Alan's single source of truth for the wedding. Keep it current.`;
+The dashboard is Alan's single source of truth for the wedding. Keep it current.
+
+## BUDGET REFERENCE
+
+Total wedding budget target: $45,000. The current budget is pre-loaded with all line items from Alan's spreadsheet. When the system injects ## CURRENT WEDDING DATA, you will see the live budget and vendor state.
+
+When discussing budget, always reference:
+- The $45,000 target and current over/under status
+- Which items are Paid vs Partial vs Budget (estimates) vs Pending
+- Upcoming payment deadlines
+
+## EMAIL-TO-BUDGET INTELLIGENCE
+
+When triaging emails, actively look for financial data to update the budget:
+
+INVOICES/QUOTES: Look for dollar amounts, line items, payment terms. Extract:
+- The total amount (update estimated or actual via update_budget)
+- Payment terms ("50% upfront" means status=partial, actual = 50% of total)
+- Due dates (update due_date on the budget item)
+
+PAYMENT CONFIRMATIONS: Look for "payment received", "charge processed", "receipt". Extract:
+- The amount paid (update actual via update_budget)
+- Update status to "paid" if fully paid, "partial" if partial
+
+VENDOR CONTRACTS: Look for contract amounts, deposit requirements, payment schedules.
+- Create timeline events for each payment milestone
+- Update vendor status to "booked" if contract is signed
+- Update the matching budget item with the contract amount`;
 

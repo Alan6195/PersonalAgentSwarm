@@ -25,6 +25,8 @@ import {
   MapPin,
   Phone,
   ExternalLink,
+  Download,
+  Upload,
 } from "lucide-react";
 import {
   PieChart,
@@ -53,6 +55,13 @@ const VENDOR_STATUS_STYLES: Record<string, { bg: string; text: string; label: st
   booked: { bg: "bg-emerald-500/15", text: "text-emerald-400", label: "Booked" },
   paid: { bg: "bg-neon-green/10", text: "text-neon-green", label: "Paid" },
   cancelled: { bg: "bg-red-500/15", text: "text-red-400", label: "Cancelled" },
+};
+
+const BUDGET_STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
+  paid: { bg: "bg-emerald-500/15", text: "text-emerald-400", label: "Paid" },
+  partial: { bg: "bg-amber-500/15", text: "text-amber-400", label: "Partial" },
+  budget: { bg: "bg-blue-500/15", text: "text-blue-400", label: "Budget" },
+  pending: { bg: "bg-carbon-700/40", text: "text-carbon-400", label: "Pending" },
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -353,7 +362,7 @@ function AddBudgetForm({
 }) {
   const [form, setForm] = useState({
     category: "venue", item: "", estimated: "", actual: "",
-    paid: false, vendor_id: "", due_date: "", notes: "",
+    status: "budget", vendor_id: "", due_date: "", notes: "",
   });
   const [saving, setSaving] = useState(false);
 
@@ -369,7 +378,8 @@ function AddBudgetForm({
           item: form.item,
           estimated_cents: form.estimated ? Math.round(parseFloat(form.estimated) * 100) : 0,
           actual_cents: form.actual ? Math.round(parseFloat(form.actual) * 100) : 0,
-          paid: form.paid,
+          paid: form.status === "paid",
+          status: form.status,
           vendor_id: form.vendor_id ? parseInt(form.vendor_id) : null,
           due_date: form.due_date || null,
           notes: form.notes || null,
@@ -446,15 +456,16 @@ function AddBudgetForm({
             onChange={(e) => setForm({ ...form, due_date: e.target.value })}
             className="bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-pink-500/50"
           />
-          <label className="flex items-center gap-2 text-sm text-carbon-400 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={form.paid}
-              onChange={(e) => setForm({ ...form, paid: e.target.checked })}
-              className="rounded border-carbon-600 bg-carbon-800"
-            />
-            Paid
-          </label>
+          <select
+            value={form.status}
+            onChange={(e) => setForm({ ...form, status: e.target.value })}
+            className="bg-carbon-800/60 border border-carbon-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-pink-500/50"
+          >
+            <option value="budget">Budget (estimate)</option>
+            <option value="pending">Pending</option>
+            <option value="partial">Partial</option>
+            <option value="paid">Paid</option>
+          </select>
         </div>
         <button
           type="submit"
@@ -797,12 +808,41 @@ export default function WeddingPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-white">Budget</h2>
-            <button
-              onClick={() => setShowAddBudget(true)}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-pink-500/10 border border-pink-500/30 text-pink-300 text-xs font-mono hover:bg-pink-500/20 transition-colors"
-            >
-              <Plus className="w-3 h-3" /> Add
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => window.open("/api/wedding/budget/export", "_blank")}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-carbon-800/60 border border-carbon-700 text-carbon-400 text-xs font-mono hover:text-white transition-colors"
+              >
+                <Download className="w-3 h-3" /> Export
+              </button>
+              <label className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-carbon-800/60 border border-carbon-700 text-carbon-400 text-xs font-mono hover:text-white transition-colors cursor-pointer">
+                <Upload className="w-3 h-3" /> Import
+                <input
+                  type="file"
+                  accept=".xlsx,.xls"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const fd = new FormData();
+                    fd.append("file", file);
+                    try {
+                      await fetch("/api/wedding/budget/import", { method: "POST", body: fd });
+                      refetch();
+                    } catch (err) {
+                      console.error("Import failed:", err);
+                    }
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              <button
+                onClick={() => setShowAddBudget(true)}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-pink-500/10 border border-pink-500/30 text-pink-300 text-xs font-mono hover:bg-pink-500/20 transition-colors"
+              >
+                <Plus className="w-3 h-3" /> Add
+              </button>
+            </div>
           </div>
 
           {chartData.length > 0 && (
@@ -849,36 +889,70 @@ export default function WeddingPage() {
             </div>
           )}
 
+          {/* Budget Summary */}
+          {stats && (
+            <div className="card p-4 space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-carbon-400">Budget Target</span>
+                <span className="font-mono text-white">{formatCost(stats.budget_target_cents)}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-carbon-400">Allocated</span>
+                <span className="font-mono text-white">{formatCost(stats.total_estimated_cents)}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-carbon-400">Paid to Date</span>
+                <span className="font-mono text-emerald-400">{formatCost(stats.total_paid_cents)}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm border-t border-carbon-800 pt-2">
+                <span className="text-carbon-400">
+                  {stats.total_estimated_cents > stats.budget_target_cents ? "Over Budget" : "Under Budget"}
+                </span>
+                <span className={cn(
+                  "font-mono font-semibold",
+                  stats.total_estimated_cents > stats.budget_target_cents ? "text-red-400" : "text-emerald-400"
+                )}>
+                  {stats.total_estimated_cents > stats.budget_target_cents ? "+" : "-"}
+                  {formatCost(Math.abs(stats.total_estimated_cents - stats.budget_target_cents))}
+                </span>
+              </div>
+            </div>
+          )}
+
           <div className="card">
             {budget.length > 0 ? (
               <div className="divide-y divide-carbon-800/50">
-                {budget.map((item) => (
-                  <div key={item.id} className="flex items-center gap-3 px-4 py-3">
-                    <span
-                      className="w-2 h-2 rounded-full shrink-0"
-                      style={{ backgroundColor: CATEGORY_COLORS[item.category] || "#94a3b8" }}
-                    />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-white truncate">{item.item}</p>
-                      <p className="text-xs font-mono text-carbon-500">
-                        {item.category.replace("_", " ")}
-                        {item.due_date && (
-                          <span className="ml-2">
-                            due {new Date(item.due_date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                          </span>
-                        )}
-                      </p>
+                {budget.map((item) => {
+                  const budgetStatus = item.status || (item.paid ? "paid" : "budget");
+                  const bStyle = BUDGET_STATUS_STYLES[budgetStatus] || BUDGET_STATUS_STYLES.budget;
+                  return (
+                    <div key={item.id} className="flex items-center gap-3 px-4 py-3">
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: CATEGORY_COLORS[item.category] || "#94a3b8" }}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-white truncate">{item.item}</p>
+                        <p className="text-xs font-mono text-carbon-500">
+                          {item.category.replace("_", " ")}
+                          {item.due_date && (
+                            <span className="ml-2">
+                              due {new Date(item.due_date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0 flex items-center gap-2">
+                        <p className="text-sm font-mono text-white">
+                          {formatCost(item.estimated_cents)}
+                        </p>
+                        <span className={cn("badge text-[10px]", bStyle.bg, bStyle.text)}>
+                          {bStyle.label}
+                        </span>
+                      </div>
                     </div>
-                    <div className="text-right shrink-0">
-                      <p className="text-sm font-mono text-white">
-                        {formatCost(item.actual_cents || item.estimated_cents)}
-                      </p>
-                      {item.paid && (
-                        <span className="text-[10px] font-mono text-neon-green">PAID</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
                 {/* Total row */}
                 <div className="flex items-center justify-between px-4 py-3 bg-carbon-800/30">
                   <span className="text-xs font-mono text-carbon-400 uppercase tracking-wider">
@@ -889,7 +963,7 @@ export default function WeddingPage() {
                       {formatCost(stats?.total_estimated_cents ?? 0)}
                     </p>
                     <p className="text-[10px] font-mono text-carbon-500">
-                      {formatCost(stats?.total_actual_cents ?? 0)} actual
+                      {formatCost(stats?.total_paid_cents ?? 0)} paid
                     </p>
                   </div>
                 </div>

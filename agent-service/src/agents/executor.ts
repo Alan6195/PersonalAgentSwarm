@@ -5,6 +5,7 @@ import * as taskManager from '../services/task-manager';
 import * as agentMemory from '../services/agent-memory';
 import * as outlookMail from '../services/outlook-mail';
 import * as gmailMail from '../services/gmail-mail';
+import { query as dbQuery } from '../db';
 
 // Agents that use persistent semantic memory
 const MEMORY_AGENTS = new Set(['legal-advisor']);
@@ -51,6 +52,39 @@ export async function run(context: AgentContext): Promise<AgentResponse> {
         } catch (emailErr) {
           console.warn(`[Executor] Email context fetch failed, continuing without:`, (emailErr as Error).message);
         }
+      }
+    }
+
+    // For wedding-planner, always inject current budget and vendor state
+    if (context.agentId === 'wedding-planner') {
+      try {
+        const budgetItems = await dbQuery(
+          `SELECT id, category, item, estimated_cents, actual_cents, status, notes
+           FROM wedding_budget ORDER BY category, item`
+        );
+        const vendors = await dbQuery(
+          `SELECT id, name, category, status, cost_estimate FROM wedding_vendors ORDER BY name`
+        );
+
+        if (budgetItems.length > 0 || vendors.length > 0) {
+          const budgetFormatted = (budgetItems as any[]).map((b: any) =>
+            `- [${b.id}] ${b.item} (${b.category}): est $${(b.estimated_cents / 100).toFixed(2)}, actual $${(b.actual_cents / 100).toFixed(2)}, status: ${b.status || 'budget'}${b.notes ? ` | ${b.notes}` : ''}`
+          ).join('\n');
+
+          const vendorFormatted = (vendors as any[]).map((v: any) =>
+            `- [${v.id}] ${v.name} (${v.category}, ${v.status})${v.cost_estimate ? ` $${(v.cost_estimate / 100).toFixed(2)}` : ''}`
+          ).join('\n');
+
+          const totalEst = (budgetItems as any[]).reduce((s: number, b: any) => s + (b.estimated_cents || 0), 0);
+          const totalActual = (budgetItems as any[]).reduce((s: number, b: any) => s + (b.actual_cents || 0), 0);
+          const totalPaid = (budgetItems as any[]).filter((b: any) => b.status === 'paid').reduce((s: number, b: any) => s + (b.estimated_cents || 0), 0);
+
+          agentPrompt += `\n\n## CURRENT WEDDING DATA\n\n### Budget ($45,000 target)\nAllocated: $${(totalEst / 100).toFixed(2)} | Actual spent: $${(totalActual / 100).toFixed(2)} | Paid: $${(totalPaid / 100).toFixed(2)}\n${totalEst > 4500000 ? `WARNING: Over budget by $${((totalEst - 4500000) / 100).toFixed(2)}\n` : ''}\n${budgetFormatted}\n\n### Vendors (${vendors.length})\n${vendorFormatted}`;
+
+          console.log(`[Executor] Injected ${budgetItems.length} budget items and ${vendors.length} vendors for wedding-planner`);
+        }
+      } catch (weddingErr) {
+        console.warn('[Executor] Wedding data context fetch failed:', (weddingErr as Error).message);
       }
     }
 

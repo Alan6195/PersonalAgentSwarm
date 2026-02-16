@@ -52,7 +52,7 @@ export async function GET() {
       `SELECT
         COALESCE(SUM(estimated_cents), 0) as total_estimated,
         COALESCE(SUM(actual_cents), 0) as total_actual,
-        COALESCE(SUM(CASE WHEN paid THEN actual_cents ELSE 0 END), 0) as total_paid
+        COALESCE(SUM(CASE WHEN status = 'paid' THEN estimated_cents WHEN status = 'partial' THEN actual_cents ELSE 0 END), 0) as total_paid
        FROM wedding_budget`
     );
 
@@ -81,6 +81,7 @@ export async function GET() {
         total_estimated_cents: parseInt(budgetStats?.total_estimated || "0"),
         total_actual_cents: parseInt(budgetStats?.total_actual || "0"),
         total_paid_cents: parseInt(budgetStats?.total_paid || "0"),
+        budget_target_cents: 4500000,
         vendors_booked: parseInt(vendorStats?.booked || "0"),
         vendors_total: parseInt(vendorStats?.total || "0"),
         upcoming_deadlines: parseInt(deadlineStats?.upcoming || "0"),
