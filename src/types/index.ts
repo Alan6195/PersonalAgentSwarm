@@ -9,6 +9,30 @@ export interface Agent {
   total_tasks: number;
   total_tokens_used: number;
   total_cost_cents: number;
+  xp: number;
+  level: number;
+  level_title: string;
+  streak: number;
+  best_streak: number;
+}
+
+export interface DevQueueItem {
+  id: number;
+  title: string;
+  description: string;
+  status: "pending" | "in_progress" | "completed" | "failed" | "cancelled";
+  priority: number;
+  created_by: string;
+  assigned_at: string | null;
+  completed_at: string | null;
+  result_summary: string | null;
+  cost_usd: number;
+  turns_used: number;
+  files_modified: string[];
+  task_id: number | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Task {

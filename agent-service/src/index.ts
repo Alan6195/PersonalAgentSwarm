@@ -3,6 +3,8 @@ import { pool } from './db';
 import { startBot } from './telegram/bot';
 import { startWebhookServer, setTelegramNotifier } from './services/webhook-server';
 import { startScheduler, stopScheduler, setCronNotifier } from './services/cron-scheduler';
+import { setProgressNotifier } from './agents/router';
+import { setBudgetAlertNotifier } from './services/cost-tracker';
 
 async function main(): Promise<void> {
   console.log('[Agent Service] Starting...');
@@ -55,10 +57,21 @@ async function main(): Promise<void> {
     }
   });
 
-  // 7. Start cron scheduler
+  // 7. Wire Telegram notifications for Gilfoyle progress reports and budget alerts
+  const telegramNotifier = async (text: string) => {
+    try {
+      await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+    } catch {
+      try { await bot.sendMessage(chatId, text); } catch { /* ignore */ }
+    }
+  };
+  setProgressNotifier(telegramNotifier);
+  setBudgetAlertNotifier(telegramNotifier);
+
+  // 8. Start cron scheduler
   startScheduler();
 
-  // 8. Graceful shutdown
+  // 9. Graceful shutdown
   const shutdown = async (): Promise<void> => {
     console.log('[Agent Service] Shutting down...');
     stopScheduler();

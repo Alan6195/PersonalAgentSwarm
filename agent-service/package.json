@@ -12,6 +12,7 @@
     "@anthropic-ai/sdk": "^0.39.0",
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "node-telegram-bot-api": "^0.66.0",
+    "pdfkit": "^0.15.2",
     "pg": "^8.13.0",
     "twitter-api-v2": "^1.18.0",
     "zod": "^4.0.0"
@@ -19,6 +20,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/node-telegram-bot-api": "^0.64.0",
+    "@types/pdfkit": "^0.13.9",
     "@types/pg": "^8.11.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"

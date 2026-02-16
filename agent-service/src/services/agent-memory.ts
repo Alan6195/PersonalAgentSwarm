@@ -194,6 +194,46 @@ export async function count(agentId: string): Promise<number> {
 // Store a conversation summary (after each legal agent interaction)
 // ---------------------------------------------------------------
 
+// Per-agent importance keyword configuration
+const AGENT_IMPORTANCE_KEYWORDS: Record<string, { critical: string[]; high: string[] }> = {
+  'legal-advisor': {
+    critical: ['court', 'attorney', 'judge', 'violation', 'emergency', 'police', 'threatening'],
+    high: ['carrie', 'custody', 'schedule', 'parenting', 'child support', 'theo', 'lyla', 'text', 'email', 'respond', 'reply', 'draft'],
+  },
+  'wedding-planner': {
+    critical: ['contract', 'deadline', 'deposit', 'cancel'],
+    high: ['vendor', 'budget', 'jade', 'venue', 'florist', 'caterer', 'photographer', 'dj', 'rsvp', 'guest list'],
+  },
+  'life-admin': {
+    critical: ['overdue', 'final notice', 'collections', 'urgent'],
+    high: ['bill', 'payment', 'insurance', 'child support', 'mortgage', 'rent', 'tax', 'medical'],
+  },
+  'social-media': {
+    critical: [],
+    high: ['strategy', 'engagement', 'analytics', 'content plan', 'thread', 'viral', 'audience'],
+  },
+  'research-analyst': {
+    critical: [],
+    high: ['finding', 'conclusion', 'recommendation', 'competitor', 'market', 'trend', 'data'],
+  },
+  'comms-drafter': {
+    critical: ['legal', 'contract', 'notice'],
+    high: ['proposal', 'pitch', 'email', 'letter', 'presentation', 'stakeholder'],
+  },
+  'ascend-builder': {
+    critical: ['launch', 'production', 'outage'],
+    high: ['architecture', 'feature', 'roadmap', 'sprint', 'ship protocol', 'design'],
+  },
+  'gilfoyle': {
+    critical: ['deploy', 'production', 'outage', 'security'],
+    high: ['bug', 'feature', 'refactor', 'infrastructure', 'database', 'migration', 'docker'],
+  },
+  'alan-os': {
+    critical: ['emergency', 'urgent'],
+    high: ['priority', 'important', 'deadline', 'reminder'],
+  },
+};
+
 export async function storeConversationSummary(
   agentId: string,
   userMessage: string,
@@ -205,34 +245,14 @@ export async function storeConversationSummary(
   const allText = `${userMessage} ${agentResponse}`;
   const keywords = extractKeywords(allText);
 
-  // Determine importance based on content signals
+  // Determine importance based on per-agent keywords
   let importance: 'low' | 'medium' | 'high' | 'critical' = 'medium';
   const lowerMsg = userMessage.toLowerCase();
+  const agentKeywords = AGENT_IMPORTANCE_KEYWORDS[agentId] ?? AGENT_IMPORTANCE_KEYWORDS['alan-os']!;
 
-  if (
-    lowerMsg.includes('court') ||
-    lowerMsg.includes('attorney') ||
-    lowerMsg.includes('judge') ||
-    lowerMsg.includes('violation') ||
-    lowerMsg.includes('emergency') ||
-    lowerMsg.includes('police') ||
-    lowerMsg.includes('threatening')
-  ) {
+  if (agentKeywords.critical.some(kw => lowerMsg.includes(kw))) {
     importance = 'critical';
-  } else if (
-    lowerMsg.includes('carrie') ||
-    lowerMsg.includes('custody') ||
-    lowerMsg.includes('schedule') ||
-    lowerMsg.includes('parenting') ||
-    lowerMsg.includes('child support') ||
-    lowerMsg.includes('theo') ||
-    lowerMsg.includes('lyla') ||
-    lowerMsg.includes('text') ||
-    lowerMsg.includes('email') ||
-    lowerMsg.includes('respond') ||
-    lowerMsg.includes('reply') ||
-    lowerMsg.includes('draft')
-  ) {
+  } else if (agentKeywords.high.some(kw => lowerMsg.includes(kw))) {
     importance = 'high';
   }
 
@@ -247,6 +267,12 @@ export async function storeConversationSummary(
     category = 'schedule';
   } else if (lowerMsg.includes('support') || lowerMsg.includes('money') || lowerMsg.includes('pay') || lowerMsg.includes('expense')) {
     category = 'financial';
+  } else if (lowerMsg.includes('vendor') || lowerMsg.includes('wedding') || lowerMsg.includes('venue')) {
+    category = 'wedding';
+  } else if (lowerMsg.includes('bug') || lowerMsg.includes('feature') || lowerMsg.includes('code') || lowerMsg.includes('deploy')) {
+    category = 'development';
+  } else if (lowerMsg.includes('research') || lowerMsg.includes('analysis') || lowerMsg.includes('market')) {
+    category = 'research';
   } else if (lowerMsg.includes('carrie') || lowerMsg.includes('she ') || lowerMsg.includes('her ')) {
     category = 'co_parent_issue';
   }

@@ -1,4 +1,8 @@
 import { config } from '../config';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 export interface DeveloperResult {
   content: string;
@@ -10,6 +14,11 @@ export interface DeveloperResult {
   numTurns: number;
   model: string;
   filesModified: string[];
+}
+
+export interface ShipModeOptions {
+  shipMode?: boolean;
+  onProgress?: (update: string) => Promise<void>;
 }
 
 const BLOCKED_PATTERNS = [
@@ -39,9 +48,19 @@ const BLOCKED_PATTERNS = [
 export async function executeDeveloperTask(
   userMessage: string,
   systemPrompt: string,
-  cwd: string
+  cwd: string,
+  options?: ShipModeOptions
 ): Promise<DeveloperResult> {
   const startTime = Date.now();
+  const isShipMode = options?.shipMode ?? false;
+
+  // Ship mode uses higher limits for overnight autonomous work
+  const maxTurns = isShipMode ? config.DEV_AGENT_SHIP_MAX_TURNS : config.DEV_AGENT_MAX_TURNS;
+  const maxBudgetUsd = isShipMode ? config.DEV_AGENT_SHIP_MAX_BUDGET_USD : config.DEV_AGENT_MAX_BUDGET_USD;
+
+  if (isShipMode) {
+    console.log(`[Gilfoyle] SHIP MODE: maxTurns=${maxTurns}, maxBudget=$${maxBudgetUsd}`);
+  }
 
   // Dynamic import for ESM module in CommonJS context
   const { query } = await import('@anthropic-ai/claude-agent-sdk');
@@ -56,6 +75,7 @@ export async function executeDeveloperTask(
     let numTurns = 0;
     let durationMs = 0;
     let model: string = config.DEEP_MODEL;
+    let lastProgressReport = 0;
 
     const response = query({
       prompt: userMessage,
@@ -65,8 +85,8 @@ export async function executeDeveloperTask(
         model: 'claude-opus-4-20250514',
         allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'],
         permissionMode: 'acceptEdits',
-        maxTurns: config.DEV_AGENT_MAX_TURNS,
-        maxBudgetUsd: config.DEV_AGENT_MAX_BUDGET_USD,
+        maxTurns,
+        maxBudgetUsd,
         canUseTool: async (toolName: string, input: Record<string, unknown>) => {
           // Block dangerous bash commands
           if (toolName === 'Bash') {
@@ -88,6 +108,8 @@ export async function executeDeveloperTask(
 
     for await (const message of response) {
       if (message.type === 'assistant') {
+        numTurns++;
+
         // Track file modifications from tool use
         const content = (message as any).message?.content;
         if (Array.isArray(content)) {
@@ -100,13 +122,29 @@ export async function executeDeveloperTask(
             }
           }
         }
+
+        // Ship mode: progress reporting every 10 turns
+        if (isShipMode && options?.onProgress && numTurns - lastProgressReport >= 10) {
+          lastProgressReport = numTurns;
+          const elapsed = Math.round((Date.now() - startTime) / 1000);
+          const progressMsg = [
+            `*Gilfoyle Ship Mode Progress*`,
+            `Turn ${numTurns}/${maxTurns} | ${elapsed}s elapsed`,
+            `Files modified: ${filesModified.length}`,
+            filesModified.length > 0 ? filesModified.slice(-5).map(f => `  - ${f.split('/').pop()}`).join('\n') : '',
+          ].filter(Boolean).join('\n');
+
+          try {
+            await options.onProgress(progressMsg);
+          } catch { /* non-critical */ }
+        }
       } else if (message.type === 'result') {
         const result = message as any;
         finalResult = result.result ?? '';
         totalCostUsd = result.total_cost_usd ?? 0;
         inputTokens = result.usage?.input_tokens ?? 0;
         outputTokens = result.usage?.output_tokens ?? 0;
-        numTurns = result.num_turns ?? 0;
+        numTurns = result.num_turns ?? numTurns;
         durationMs = result.duration_ms ?? (Date.now() - startTime);
 
         if (result.modelUsage) {
@@ -118,6 +156,20 @@ export async function executeDeveloperTask(
           const errors = result.errors ?? ['Unknown error'];
           finalResult = `Developer agent encountered an error: ${errors.join('; ')}`;
         }
+      }
+    }
+
+    // Ship mode: auto-commit if files were modified
+    if (isShipMode && filesModified.length > 0) {
+      try {
+        const summary = finalResult.substring(0, 72).replace(/["`\n]/g, ' ').trim();
+        const commitMsg = `Gilfoyle ship: ${summary || 'autonomous build'}`;
+        await execAsync(`cd "${cwd}" && git add -A && git commit -m "${commitMsg}"`, {
+          timeout: 30_000,
+        });
+        console.log(`[Gilfoyle] Ship mode commit: ${commitMsg}`);
+      } catch (gitErr) {
+        console.warn('[Gilfoyle] Ship mode git commit failed:', (gitErr as Error).message);
       }
     }
 

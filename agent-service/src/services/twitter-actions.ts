@@ -1,5 +1,6 @@
 import * as twitter from './twitter';
 import * as atlasCloud from './atlas-cloud';
+import * as xIntelligence from './x-intelligence';
 
 export interface TwitterActionResult {
   actionTaken: boolean;
@@ -234,29 +235,53 @@ export async function processTwitterActions(
   }
 
   // ------------------------------------------------------------------
-  // [ACTION:SEARCH:query]
+  // [ACTION:INTEL_SCAN] - Full intelligence scan (new, preferred)
+  // [ACTION:INTEL_SCAN:topic1,topic2]
+  // ------------------------------------------------------------------
+  const intelMatch = agentResponse.match(/\[ACTION:INTEL_SCAN(?::([^\]]+))?\]/);
+  if (intelMatch) {
+    const topics = intelMatch[1]
+      ? intelMatch[1].split(',').map(t => t.trim())
+      : ['ai_agents', 'ai_adoption', 'agent_frameworks'];
+    try {
+      const report = await xIntelligence.runIntelligenceScan(topics);
+      const formatted = xIntelligence.formatForSocialMedia(report);
+
+      // Store trend snapshot for historical tracking
+      await xIntelligence.storeTrendSnapshot(report);
+
+      const cleanResponse = agentResponse.replace(/\[ACTION:INTEL_SCAN[^\]]*\]/, '').trim();
+      return {
+        actionTaken: true,
+        actionType: 'intel_scan',
+        result: `${cleanResponse}\n\n${formatted}`.trim(),
+        originalResponse: agentResponse,
+      };
+    } catch (err) {
+      return {
+        actionTaken: false,
+        actionType: 'intel_scan_failed',
+        result: `${agentResponse}\n\nIntelligence scan failed: ${(err as Error).message}`,
+        originalResponse: agentResponse,
+      };
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // [ACTION:SEARCH:query] - with improved classification
   // ------------------------------------------------------------------
   const searchMatch = agentResponse.match(/\[ACTION:SEARCH:(.+?)\]/);
   if (searchMatch) {
     const searchQuery = searchMatch[1].trim();
     try {
       const tweets = await twitter.searchTweets(searchQuery, 20);
-      const formatted = tweets.length > 0
-        ? tweets.map((t, i) => {
-            const username = (t as any).author_username ?? t.author_id;
-            const metrics = t.public_metrics;
-            const stats = metrics
-              ? `${metrics.like_count} likes, ${metrics.retweet_count} RTs`
-              : '';
-            return `${i + 1}. @${username}: "${t.text?.substring(0, 140)}" ${stats ? `(${stats})` : ''} ${t.created_at ?? ''}`.trim();
-          }).join('\n')
-        : 'No results found.';
+      const formatted = xIntelligence.formatSearchResults(tweets, searchQuery);
 
       const cleanResponse = agentResponse.replace(/\[ACTION:SEARCH:.+?\]/, '').trim();
       return {
         actionTaken: true,
         actionType: 'search',
-        result: `${cleanResponse}\n\nSearch results for "${searchQuery}":\n${formatted}`.trim(),
+        result: `${cleanResponse}\n\n${formatted}`.trim(),
         originalResponse: agentResponse,
       };
     } catch (err) {

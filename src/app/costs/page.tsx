@@ -9,6 +9,8 @@ import {
   TrendingDown,
   Zap,
   BarChart3,
+  Shield,
+  AlertTriangle,
 } from "lucide-react";
 import {
   AreaChart,
@@ -151,6 +153,55 @@ export default function CostTrackerPage() {
           <p className="stat-label mt-1">Projected / Month</p>
         </div>
       </div>
+
+      {/* Daily Budget Meter */}
+      {data?.daily && data.daily.length > 0 && (() => {
+        const dailyBudgetCents = 5000; // $50 daily limit (matches DAILY_BUDGET_LIMIT_CENTS)
+        const todayCost = data.daily[data.daily.length - 1]?.total_cost_cents ?? 0;
+        const pct = Math.min(100, (todayCost / dailyBudgetCents) * 100);
+        const isWarning = pct >= 60 && pct < 80;
+        const isDanger = pct >= 80;
+        const barColor = isDanger ? "#ef4444" : isWarning ? "#f59e0b" : "#00ff9d";
+
+        return (
+          <div className="card p-6">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Shield className="w-4 h-4 text-carbon-400" />
+                <h2 className="text-sm font-semibold text-white">
+                  Daily Budget
+                </h2>
+              </div>
+              <div className="flex items-center gap-2">
+                {isDanger && (
+                  <AlertTriangle className="w-3.5 h-3.5 text-neon-red" />
+                )}
+                <span className="text-xs font-mono text-carbon-400">
+                  {formatCost(todayCost)} / {formatCost(dailyBudgetCents)}
+                </span>
+              </div>
+            </div>
+            <div className="w-full h-3 bg-carbon-800 rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all duration-700"
+                style={{
+                  width: `${pct}%`,
+                  backgroundColor: barColor,
+                  boxShadow: isDanger ? `0 0 12px ${barColor}40` : undefined,
+                }}
+              />
+            </div>
+            <div className="flex items-center justify-between mt-2">
+              <span className="text-[11px] font-mono text-carbon-600">
+                {pct.toFixed(0)}% used
+              </span>
+              <span className="text-[11px] font-mono text-carbon-600">
+                {formatCost(Math.max(0, dailyBudgetCents - todayCost))} remaining
+              </span>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Daily Cost Chart */}
       <div className="card p-6">

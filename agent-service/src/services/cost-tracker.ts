@@ -1,5 +1,13 @@
 import { withTransaction } from '../db';
 import { getModelCategory } from '../config';
+import { shouldSendBudgetAlert } from './cost-guardrails';
+
+// Telegram notifier for budget alerts (set from index.ts)
+let budgetAlertNotifier: ((text: string) => Promise<void>) | null = null;
+
+export function setBudgetAlertNotifier(notifier: (text: string) => Promise<void>): void {
+  budgetAlertNotifier = notifier;
+}
 
 interface CostEvent {
   agent_id: string;
@@ -87,4 +95,17 @@ export async function logCostEvent(event: CostEvent): Promise<void> {
       );
     }
   });
+
+  // Check for budget alert (80% threshold, once per day)
+  if (budgetAlertNotifier) {
+    try {
+      const alertCheck = await shouldSendBudgetAlert();
+      if (alertCheck.alert) {
+        const pct = Math.round((alertCheck.spent / alertCheck.limit) * 100);
+        const alertMsg = `⚠️ *Budget Alert*\n\nDaily spend has reached ${pct}% ($${(alertCheck.spent / 100).toFixed(2)} / $${(alertCheck.limit / 100).toFixed(2)})\n\nAutomated (cron) tasks will be paused if the limit is reached. User-initiated tasks will still work.`;
+        await budgetAlertNotifier(alertMsg);
+        console.log(`[CostTracker] Budget alert sent: ${pct}% of daily limit`);
+      }
+    } catch { /* non-critical */ }
+  }
 }

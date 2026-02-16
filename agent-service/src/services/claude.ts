@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config';
 import { logCostEvent } from './cost-tracker';
+import { checkBudget } from './cost-guardrails';
 import type { ConversationMessage } from './conversation-memory';
 
 const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
@@ -26,6 +27,25 @@ export interface ClaudeCallResult {
 }
 
 export async function callClaude(params: ClaudeCallParams): Promise<ClaudeCallResult> {
+  // Budget check: skip cron jobs if over budget, allow user tasks with warning
+  try {
+    const budget = await checkBudget(params.agentId);
+    if (!budget.allowed) {
+      // For cron/proactive jobs, hard block
+      if (params.eventType === 'cron' || params.eventType === 'proactive') {
+        console.warn(`[Claude] Budget exceeded for ${params.agentId}: ${budget.reason}. Skipping cron job.`);
+        return {
+          content: `[BUDGET LIMIT] ${budget.reason}. This automated task was skipped to control costs.`,
+          tokensUsed: { input: 0, output: 0, total: 0 },
+          model: params.model,
+          costCents: 0,
+        };
+      }
+      // For user-initiated tasks, log warning but proceed
+      console.warn(`[Claude] Budget warning for ${params.agentId}: ${budget.reason}. Allowing user task.`);
+    }
+  } catch { /* non-critical: proceed if budget check fails */ }
+
   // Build messages array: history (if any) + current user message
   const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
 

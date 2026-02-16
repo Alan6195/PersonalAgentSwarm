@@ -1,4 +1,5 @@
 import { query, queryOne } from '../db';
+import * as xpSystem from './xp-system';
 
 interface CreateTaskParams {
   title: string;
@@ -69,16 +70,57 @@ export async function completeTask(taskId: number, result: CompleteTaskParams): 
     [result.content.substring(0, 2000), result.tokensUsed, result.costCents, result.durationMs, taskId]
   );
 
-  // Increment agent total_tasks
+  // Increment agent total_tasks + award XP
   if (task?.assigned_agent) {
     await query(
       `UPDATE agents SET total_tasks = total_tasks + 1, updated_at = NOW() WHERE id = $1`,
       [task.assigned_agent]
     );
+
+    // Award XP for successful task completion
+    try {
+      // Determine event type from task metadata
+      const fullTask = await queryOne<{ metadata: string; delegated_by: string | null }>(
+        'SELECT metadata, delegated_by FROM tasks WHERE id = $1',
+        [taskId]
+      );
+      const meta = fullTask?.metadata ? JSON.parse(fullTask.metadata) : {};
+      let eventType = 'task';
+      if (meta.channel === 'cron') eventType = 'cron';
+      else if (fullTask?.delegated_by) eventType = 'delegation';
+      else if (meta.channel === 'meeting') eventType = 'meeting';
+
+      // Get current streak for multiplier
+      const agentRow = await queryOne<{ streak: number }>(
+        'SELECT COALESCE(streak, 0) as streak FROM agents WHERE id = $1',
+        [task.assigned_agent]
+      );
+
+      const { xpEarned } = xpSystem.calculateXP({
+        eventType,
+        durationMs: result.durationMs,
+        costCents: result.costCents,
+        success: true,
+        streak: agentRow?.streak ?? 0,
+      });
+
+      const xpResult = await xpSystem.awardXP(task.assigned_agent, xpEarned);
+      if (xpResult.leveledUp) {
+        console.log(`[XP] ${task.assigned_agent} earned ${xpEarned} XP and LEVELED UP to ${xpResult.newTitle}!`);
+      }
+    } catch (xpErr) {
+      console.warn('[XP] Failed to award XP:', (xpErr as Error).message);
+    }
   }
 }
 
 export async function failTask(taskId: number, errorMessage: string): Promise<void> {
+  // Get assigned agent before updating
+  const task = await queryOne<{ assigned_agent: string }>(
+    'SELECT assigned_agent FROM tasks WHERE id = $1',
+    [taskId]
+  );
+
   await query(
     `UPDATE tasks SET
       status = 'failed',
@@ -88,6 +130,16 @@ export async function failTask(taskId: number, errorMessage: string): Promise<vo
      WHERE id = $2`,
     [errorMessage, taskId]
   );
+
+  // Deduct XP for failure
+  if (task?.assigned_agent) {
+    try {
+      await xpSystem.deductXP(task.assigned_agent, 5);
+      console.log(`[XP] ${task.assigned_agent} lost 5 XP (task failed)`);
+    } catch (xpErr) {
+      console.warn('[XP] Failed to deduct XP:', (xpErr as Error).message);
+    }
+  }
 }
 
 export async function updateTaskStatus(taskId: number, status: string): Promise<void> {

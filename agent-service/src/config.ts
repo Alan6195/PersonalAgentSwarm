@@ -37,6 +37,24 @@ export const config = {
   DEV_AGENT_MAX_TURNS: parseInt(process.env.DEV_AGENT_MAX_TURNS || '30', 10),
   DEV_AGENT_MAX_BUDGET_USD: parseFloat(process.env.DEV_AGENT_MAX_BUDGET_USD || '5.00'),
 
+  // Ship mode (autonomous overnight builds)
+  DEV_AGENT_SHIP_MAX_TURNS: parseInt(process.env.DEV_AGENT_SHIP_MAX_TURNS || '100', 10),
+  DEV_AGENT_SHIP_MAX_BUDGET_USD: parseFloat(process.env.DEV_AGENT_SHIP_MAX_BUDGET_USD || '25.00'),
+
+  // Web search (Brave Search or Serper.dev)
+  SEARCH_API_KEY: process.env.SEARCH_API_KEY || '',
+  SEARCH_API_URL: process.env.SEARCH_API_URL || 'https://api.search.brave.com/res/v1/web/search',
+
+  // Google Calendar
+  GOOGLE_CALENDAR_CLIENT_ID: process.env.GOOGLE_CALENDAR_CLIENT_ID || '',
+  GOOGLE_CALENDAR_CLIENT_SECRET: process.env.GOOGLE_CALENDAR_CLIENT_SECRET || '',
+  GOOGLE_CALENDAR_REFRESH_TOKEN: process.env.GOOGLE_CALENDAR_REFRESH_TOKEN || '',
+  GOOGLE_CALENDAR_ID: process.env.GOOGLE_CALENDAR_ID || 'primary',
+
+  // Cost guardrails
+  DAILY_BUDGET_LIMIT_CENTS: parseInt(process.env.DAILY_BUDGET_LIMIT_CENTS || '5000', 10),
+  AGENT_DAILY_LIMIT_CENTS: parseInt(process.env.AGENT_DAILY_LIMIT_CENTS || '1000', 10),
+
   // Model config
   ROUTER_MODEL: 'claude-sonnet-4-20250514',
   DEEP_MODEL: 'claude-opus-4-20250514',
@@ -95,6 +113,21 @@ export function validateConfig(): void {
   }
 
   console.log(`[Config] Developer agent: cwd=${config.DEV_AGENT_CWD}, maxTurns=${config.DEV_AGENT_MAX_TURNS}, maxBudget=$${config.DEV_AGENT_MAX_BUDGET_USD}`);
+  console.log(`[Config] Ship mode: maxTurns=${config.DEV_AGENT_SHIP_MAX_TURNS}, maxBudget=$${config.DEV_AGENT_SHIP_MAX_BUDGET_USD}`);
+
+  if (config.SEARCH_API_KEY) {
+    console.log('[Config] Web search API configured; search features enabled.');
+  } else {
+    console.log('[Config] SEARCH_API_KEY not set; web search disabled.');
+  }
+
+  if (config.GOOGLE_CALENDAR_CLIENT_ID && config.GOOGLE_CALENDAR_REFRESH_TOKEN) {
+    console.log('[Config] Google Calendar credentials found; calendar features enabled.');
+  } else {
+    console.log('[Config] Google Calendar credentials not set; calendar features disabled.');
+  }
+
+  console.log(`[Config] Cost guardrails: daily=$${(config.DAILY_BUDGET_LIMIT_CENTS / 100).toFixed(2)}, per-agent=$${(config.AGENT_DAILY_LIMIT_CENTS / 100).toFixed(2)}`);
   console.log('[Config] All environment variables validated.');
 }
 

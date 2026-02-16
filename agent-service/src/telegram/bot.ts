@@ -2,6 +2,8 @@ import TelegramBot from 'node-telegram-bot-api';
 import { config } from '../config';
 import { handleUserMessage } from '../agents/router';
 import { getSystemHealth } from '../services/task-manager';
+import * as xpSystem from '../services/xp-system';
+import { query, queryOne } from '../db';
 
 function splitMessage(text: string, maxLength: number = 4096): string[] {
   if (text.length <= maxLength) return [text];
@@ -38,6 +40,67 @@ function splitMessage(text: string, maxLength: number = 4096): string[] {
 
 function formatCost(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
+}
+
+async function handleLeaderboardCommand(chatId: number, bot: TelegramBot): Promise<void> {
+  try {
+    const leaderboard = await xpSystem.getLeaderboard();
+    const msg = xpSystem.formatLeaderboardForTelegram(leaderboard);
+    await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
+  } catch (err) {
+    await bot.sendMessage(chatId, `Leaderboard failed: ${(err as Error).message}`);
+  }
+}
+
+async function handleQueueCommand(chatId: number, bot: TelegramBot): Promise<void> {
+  try {
+    const items = await query<{ id: number; title: string; status: string; priority: number; created_at: string }>(
+      `SELECT id, title, status, priority, created_at FROM dev_queue
+       WHERE status IN ('pending', 'in_progress')
+       ORDER BY priority DESC, created_at ASC
+       LIMIT 15`
+    );
+
+    if (items.length === 0) {
+      await bot.sendMessage(chatId, '*Dev Queue*\n\nNo pending items. Gilfoyle is idle.', { parse_mode: 'Markdown' });
+      return;
+    }
+
+    const statusEmoji: Record<string, string> = { pending: '⏳', in_progress: '🔨', completed: '✅', failed: '❌' };
+    const lines = items.map(item => {
+      const emoji = statusEmoji[item.status] || '❓';
+      return `${emoji} #${item.id} [P${item.priority}] ${item.title}`;
+    });
+
+    const msg = `*Dev Queue* (${items.length} items)\n\n${lines.join('\n')}`;
+    await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
+  } catch (err) {
+    await bot.sendMessage(chatId, `Queue check failed: ${(err as Error).message}`);
+  }
+}
+
+async function handleShipCommand(chatId: number, text: string, bot: TelegramBot): Promise<void> {
+  // Parse: /ship <description>
+  const description = text.replace(/^\/ship\s*/i, '').trim();
+  if (!description) {
+    await bot.sendMessage(chatId, 'Usage: /ship <description of what to build>\n\nExample: /ship Build a health check endpoint with uptime tracking', { parse_mode: 'Markdown' });
+    return;
+  }
+
+  try {
+    const row = await queryOne<{ id: number }>(
+      `INSERT INTO dev_queue (title, description, priority, created_by)
+       VALUES ($1, $2, $3, 'alan')
+       RETURNING id`,
+      [description.substring(0, 100), description, 7]
+    );
+
+    if (row) {
+      await bot.sendMessage(chatId, `*Queued for Gilfoyle*\n\nDev Queue #${row.id}: ${description.substring(0, 100)}\nPriority: 7/10\n\nGilfoyle will pick this up during his night shift (11 PM) or you can ask him directly.`, { parse_mode: 'Markdown' });
+    }
+  } catch (err) {
+    await bot.sendMessage(chatId, `Failed to queue item: ${(err as Error).message}`);
+  }
 }
 
 async function handleStatusCommand(chatId: number, bot: TelegramBot): Promise<void> {
@@ -84,9 +147,21 @@ export function startBot(): TelegramBot {
 
     if (!text) return;
 
-    // Handle /status command
+    // Handle slash commands
     if (text === '/status' || text === '/start') {
       await handleStatusCommand(chatId, bot);
+      return;
+    }
+    if (text === '/leaderboard' || text === '/xp') {
+      await handleLeaderboardCommand(chatId, bot);
+      return;
+    }
+    if (text === '/queue') {
+      await handleQueueCommand(chatId, bot);
+      return;
+    }
+    if (text.startsWith('/ship')) {
+      await handleShipCommand(chatId, text, bot);
       return;
     }
 

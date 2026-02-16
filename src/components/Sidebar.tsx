@@ -13,6 +13,9 @@ import {
   Radio,
   Zap,
   Heart,
+  Trophy,
+  GitBranch,
+  Plane,
 } from "lucide-react";
 
 const navItems = [
@@ -21,7 +24,10 @@ const navItems = [
   { href: "/crons", label: "Cron Monitor", icon: Clock },
   { href: "/costs", label: "Cost Tracker", icon: DollarSign },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/leaderboard", label: "Leaderboard", icon: Trophy },
+  { href: "/dev-queue", label: "Dev Queue", icon: GitBranch },
   { href: "/wedding", label: "Wedding", icon: Heart },
+  { href: "/travel", label: "Honeymoon", icon: Plane },
 ];
 
 const agents = [
@@ -33,6 +39,8 @@ const agents = [
   { id: "life-admin", name: "Life Admin", color: "#f97316", model: "sonnet" },
   { id: "research-analyst", name: "Research Analyst", color: "#a855f7", model: "opus" },
   { id: "comms-drafter", name: "Comms Drafter", color: "#eab308", model: "sonnet" },
+  { id: "gilfoyle", name: "Gilfoyle", color: "#10b981", model: "opus" },
+  { id: "travel-agent", name: "Travel Agent", color: "#f59e0b", model: "opus" },
 ];
 
 export function Sidebar() {

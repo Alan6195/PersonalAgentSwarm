@@ -14,6 +14,7 @@ import {
   Heart,
   ArrowRight,
   Activity,
+  Flame,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -56,6 +57,14 @@ function StatCard({
   );
 }
 
+function getLevelColor(level: number): string {
+  if (level >= 9) return "text-amber-400";
+  if (level >= 7) return "text-purple-400";
+  if (level >= 5) return "text-blue-400";
+  if (level >= 3) return "text-green-400";
+  return "text-carbon-400";
+}
+
 function AgentCard({ agent }: { agent: Agent & { active_tasks?: number } }) {
   return (
     <div className="card p-4 flex items-center gap-4 hover:border-carbon-700 transition-colors">
@@ -85,14 +94,31 @@ function AgentCard({ agent }: { agent: Agent & { active_tasks?: number } }) {
         />
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-white truncate">{agent.name}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-medium text-white truncate">{agent.name}</p>
+          {(agent.level || 0) > 0 && (
+            <span className={cn("text-[10px] font-mono", getLevelColor(agent.level || 1))}>
+              Lv.{agent.level}
+            </span>
+          )}
+          {(agent.streak || 0) > 0 && (
+            <span className="flex items-center gap-0.5 text-[10px] font-mono text-orange-400">
+              <Flame className="w-2.5 h-2.5" />
+              {agent.streak}
+            </span>
+          )}
+        </div>
         <p className="text-xs text-carbon-500 font-mono">
-          {agent.model} · {agent.total_tasks} tasks · {formatCost(agent.total_cost_cents)}
+          {agent.level_title || agent.model} · {(agent.xp || 0).toLocaleString()} XP · {agent.total_tasks} tasks
         </p>
       </div>
-      {(agent.active_tasks ?? 0) > 0 && (
+      {(agent.active_tasks ?? 0) > 0 ? (
         <span className="badge bg-neon-blue/10 text-neon-blue border-neon-blue/30">
           {agent.active_tasks} active
+        </span>
+      ) : (
+        <span className="text-xs font-mono text-carbon-600">
+          {formatCost(agent.total_cost_cents)}
         </span>
       )}
     </div>

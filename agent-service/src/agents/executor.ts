@@ -5,10 +5,18 @@ import * as taskManager from '../services/task-manager';
 import * as agentMemory from '../services/agent-memory';
 import * as outlookMail from '../services/outlook-mail';
 import * as gmailMail from '../services/gmail-mail';
+import * as webSearch from '../services/web-search';
+import * as xIntelligence from '../services/x-intelligence';
+import * as twitter from '../services/twitter';
+import * as googleCalendar from '../services/google-calendar';
+import * as travelStateService from '../services/travel-state';
 import { query as dbQuery } from '../db';
 
-// Agents that use persistent semantic memory
-const MEMORY_AGENTS = new Set(['legal-advisor']);
+// All agents use persistent semantic memory
+const MEMORY_AGENTS = new Set([
+  'alan-os', 'ascend-builder', 'legal-advisor', 'social-media',
+  'wedding-planner', 'life-admin', 'research-analyst', 'comms-drafter', 'gilfoyle', 'travel-agent',
+]);
 
 export async function run(context: AgentContext): Promise<AgentResponse> {
   const startTime = Date.now();
@@ -103,6 +111,137 @@ export async function run(context: AgentContext): Promise<AgentResponse> {
           }
         } catch (gmailErr) {
           console.warn(`[Executor] Gmail context fetch failed, continuing without:`, (gmailErr as Error).message);
+        }
+      }
+    }
+
+    // For alan-os and life-admin, inject calendar context on schedule-related keywords
+    if ((context.agentId === 'alan-os' || context.agentId === 'life-admin') && googleCalendar.isConfigured()) {
+      const calendarKeywords = /\b(calendar|schedule|meeting|event|today|tomorrow|this week|free time|availability|busy|block|appointment|call|what's on)\b/i;
+      if (calendarKeywords.test(context.userMessage)) {
+        try {
+          const events = await googleCalendar.getUpcomingEvents(3);
+          if (events.length > 0) {
+            const formatted = googleCalendar.formatEventsForAgent(events);
+            agentPrompt += `\n\n## CALENDAR_CONTEXT\nAlan's upcoming events (next 3 days, auto-fetched):\n\n${formatted}`;
+            console.log(`[Executor] Injected ${events.length} calendar events for ${context.agentId}`);
+          } else {
+            agentPrompt += `\n\n## CALENDAR_CONTEXT\nNo events scheduled in the next 3 days.`;
+          }
+        } catch (calErr) {
+          console.warn(`[Executor] Calendar context fetch failed, continuing without:`, (calErr as Error).message);
+        }
+      }
+    }
+
+    // For research-analyst, inject web search results when search-related
+    if (context.agentId === 'research-analyst' && webSearch.isConfigured()) {
+      const searchKeywords = /\b(search|look up|find|what is|who is|latest|current|recent news|research)\b/i;
+      if (searchKeywords.test(context.userMessage)) {
+        try {
+          const results = await webSearch.searchWeb(context.userMessage, 5);
+          if (results.length > 0) {
+            const formatted = webSearch.formatResultsForAgent(results);
+            agentPrompt += `\n\n## WEB_SEARCH_RESULTS\nResults for your research query (auto-fetched):\n\n${formatted}`;
+            console.log(`[Executor] Injected ${results.length} web search results for research-analyst`);
+          }
+        } catch (searchErr) {
+          console.warn('[Executor] Web search failed, continuing without:', (searchErr as Error).message);
+        }
+      }
+    }
+
+    // For social-media, inject X intelligence when scanning or looking for content ideas
+    if (context.agentId === 'social-media' && twitter.isConfigured()) {
+      const scanKeywords = /\b(scan|trending|analyze|intelligence|what.*tweet about|topics|what should i post|feed|research|market|opportunities)\b/i;
+      if (scanKeywords.test(context.userMessage)) {
+        try {
+          const report = await xIntelligence.runIntelligenceScan(
+            ['ai_agents', 'ai_adoption', 'agent_frameworks', 'ai_business_value'],
+            10
+          );
+          if (report.insights.length > 0) {
+            const formatted = xIntelligence.formatForSocialMedia(report);
+            agentPrompt += `\n\n${formatted}`;
+
+            // Store trend snapshot for historical tracking
+            await xIntelligence.storeTrendSnapshot(report);
+
+            console.log(`[Executor] Injected X intelligence scan (${report.insights.length} insights) for social-media`);
+          }
+        } catch (xErr) {
+          console.warn('[Executor] X intelligence scan failed:', (xErr as Error).message);
+        }
+
+        // Also inject web search for broader AI news context
+        if (webSearch.isConfigured()) {
+          try {
+            const results = await webSearch.searchWeb('AI agents news this week', 5);
+            if (results.length > 0) {
+              const formatted = webSearch.formatResultsForAgent(results);
+              agentPrompt += `\n\n## WEB_NEWS_CONTEXT\nLatest AI/agent news from the web:\n\n${formatted}`;
+            }
+          } catch (searchErr) {
+            console.warn('[Executor] Web news fetch failed:', (searchErr as Error).message);
+          }
+        }
+      }
+    }
+
+    // For research-analyst, inject X intelligence when X/Twitter-related research is requested
+    if (context.agentId === 'research-analyst' && twitter.isConfigured()) {
+      const xResearchKeywords = /\b(x |twitter|tweet|social media|x\.com|trending on x|x research|x analysis|engagement|followers)\b/i;
+      if (xResearchKeywords.test(context.userMessage)) {
+        try {
+          const report = await xIntelligence.runIntelligenceScan(
+            ['ai_agents', 'ai_adoption', 'competitors_and_peers', 'ai_business_value'],
+            10
+          );
+          if (report.insights.length > 0) {
+            const formatted = xIntelligence.formatForResearch(report);
+            agentPrompt += `\n\n${formatted}`;
+
+            // Also inject recent trend history for comparison
+            const recentTrends = await xIntelligence.getRecentTrends(7);
+            if (recentTrends.length > 0) {
+              const trendHistory = recentTrends.map((t: any) =>
+                `${t.scan_date}: ${t.total_scanned} scanned, ${t.hot_leads} hot leads, ${t.warm_prospects} warm, themes: ${JSON.stringify(t.top_themes)}`
+              ).join('\n');
+              agentPrompt += `\n\n## X TREND HISTORY (last 7 days)\n${trendHistory}`;
+            }
+
+            console.log(`[Executor] Injected X intelligence (${report.insights.length} insights) + trend history for research-analyst`);
+          }
+        } catch (xErr) {
+          console.warn('[Executor] X intelligence for research failed:', (xErr as Error).message);
+        }
+      }
+    }
+
+    // For travel-agent, always inject current travel state + web search for pricing
+    if (context.agentId === 'travel-agent') {
+      try {
+        const travelContext = await travelStateService.buildTravelContext();
+        agentPrompt += `\n\n${travelContext}`;
+        console.log(`[Executor] Injected travel state context for travel-agent`);
+      } catch (travelErr) {
+        console.warn(`[Executor] Travel state fetch failed, continuing without:`, (travelErr as Error).message);
+      }
+
+      // Also inject web search if they're asking about specific hotels/restaurants/prices
+      if (webSearch.isConfigured()) {
+        const searchKeywords = /\b(hotel|restaurant|price|cost|book|alternative|other option|search|find|look up)\b/i;
+        if (searchKeywords.test(context.userMessage)) {
+          try {
+            const results = await webSearch.searchWeb(`Portugal ${context.userMessage} 2026`, 5);
+            if (results.length > 0) {
+              const formatted = webSearch.formatResultsForAgent(results);
+              agentPrompt += `\n\n## WEB_SEARCH_RESULTS\nResults for your travel research query:\n\n${formatted}`;
+              console.log(`[Executor] Injected ${results.length} web search results for travel-agent`);
+            }
+          } catch (searchErr) {
+            console.warn('[Executor] Web search for travel failed:', (searchErr as Error).message);
+          }
         }
       }
     }

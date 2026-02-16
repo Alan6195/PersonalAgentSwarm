@@ -9,6 +9,7 @@ import { lifeAdminPrompt } from './prompts/life-admin';
 import { researchAnalystPrompt } from './prompts/research-analyst';
 import { commsDrafterPrompt } from './prompts/comms-drafter';
 import { gilfoylePrompt } from './prompts/gilfoyle';
+import { travelAgentPrompt } from './prompts/travel-agent';
 
 const agents: Record<string, AgentDefinition> = {
   'alan-os':          { prompt: alanOsPrompt,          model: config.DEEP_MODEL },
@@ -20,6 +21,7 @@ const agents: Record<string, AgentDefinition> = {
   'research-analyst': { prompt: researchAnalystPrompt,  model: config.DEEP_MODEL },
   'comms-drafter':    { prompt: commsDrafterPrompt,     model: config.ROUTER_MODEL },
   'gilfoyle':         { prompt: gilfoylePrompt,          model: config.DEEP_MODEL },
+  'travel-agent':     { prompt: travelAgentPrompt,       model: config.DEEP_MODEL },
 };
 
 export function getPrompt(agentId: string): string {

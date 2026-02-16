@@ -8,14 +8,26 @@ import { processTwitterActions } from '../services/twitter-actions';
 import { processEmailActions } from '../services/email-actions';
 import { processGmailActions } from '../services/gmail-actions';
 import { processWeddingDataActions } from '../services/wedding-data-actions';
+import { processTravelActions } from '../services/travel-actions';
 import { executeDeveloperTask } from '../services/developer-executor';
 import { getPrompt } from './registry';
 import * as memory from '../services/conversation-memory';
 
+// Ship mode detection pattern
+const SHIP_MODE_PATTERN = /\/ship|build.*overnight|gilfoyle.*work.*overnight|night\s*shift|autonomous.*build|full\s*build|ship\s*mode/i;
+
+// Progress notifier (wired from index.ts)
+let progressNotifier: ((text: string) => Promise<void>) | null = null;
+
+export function setProgressNotifier(notifier: (text: string) => Promise<void>): void {
+  progressNotifier = notifier;
+}
+
 const ROUTING_PROMPT = `You are Alan OS, a routing AI. Your job is to classify an incoming message and decide how to handle it.
 
-Option 1: Respond directly (general chat, quick questions, multi-domain items, greetings, status checks)
-Option 2: Delegate to a specialist agent
+Option 1: Respond directly (general chat, quick questions, greetings, status checks)
+Option 2: Delegate to a single specialist agent
+Option 3: Multi-delegate to 2-3 agents in parallel (for complex requests that span multiple domains, then alan-os will synthesize their results)
 
 Available specialist agents:
 - ascend-builder: Ascend Intuition, Ship Protocol, app development, technical architecture
@@ -23,14 +35,16 @@ Available specialist agents:
 - social-media: X/Twitter posting, content creation, feed scanning, engagement. ALWAYS delegate when Alan says "tweet", "post to X", "thread about", "scan the feed", "what should I tweet", "check my mentions", or anything about X/Twitter content
 - wedding-planner: July 12 2026 wedding coordination with Jade, wedding email management, vendor emails. ALWAYS delegate when Alan says "wedding email", "check wedding inbox", "wedding vendor", "email the florist/DJ/photographer/caterer/venue"
 - life-admin: Finances, custody schedule, household, personal logistics, email management, inbox triage, email cleanup. ALWAYS delegate when Alan says "check my email", "clean my inbox", "email triage", or anything about managing email
-- research-analyst: Deep research, competitive intel, market analysis
+- research-analyst: Deep research, competitive intel, market analysis, web search, X/Twitter trend analysis. ALWAYS delegate when Alan says "analyze X", "X trends", "Twitter analysis", "research the X feed", "what's trending on X", or requests analysis of social media data/trends
 - comms-drafter: Email drafting, Slack messages, proposals, written communications
 - gilfoyle: Code changes, bug fixes, new features, file reading/editing, shell commands, codebase operations, git, npm, docker
+- travel-agent: Portugal honeymoon trip planning (July 16-26, 2026). Hotels, activities, restaurants, transport, booking. ALWAYS delegate when Alan mentions "honeymoon", "Portugal trip", "travel", "hotels in Portugal", "Porto", "Lisbon", "Algarve", "Faro", or anything about the honeymoon itinerary
 
 Respond with ONLY valid JSON (no markdown, no backticks):
 {
-  "action": "respond_directly" or "delegate",
-  "target_agent_id": "<agent-id if delegating, omit if responding directly>",
+  "action": "respond_directly" or "delegate" or "multi_delegate",
+  "target_agent_id": "<agent-id if single delegate, omit otherwise>",
+  "target_agent_ids": ["<agent-id-1>", "<agent-id-2>"] (only for multi_delegate),
   "reasoning": "<brief one-sentence reasoning>",
   "priority": "urgent" or "high" or "normal" or "low",
   "domain": "<optional domain tag>",
@@ -167,10 +181,27 @@ export async function handleUserMessage(
         await taskManager.setAgentStatus('gilfoyle', 'active');
         await taskManager.updateTaskStatus(subTask.id, 'in_progress');
 
+        // Detect ship mode from message keywords
+        const isShipMode = SHIP_MODE_PATTERN.test(userMessage);
+        if (isShipMode) {
+          console.log(`[Router] Ship mode activated for Gilfoyle`);
+          await activityLogger.log({
+            event_type: 'ship_mode_activated',
+            agent_id: 'gilfoyle',
+            task_id: subTask.id,
+            channel: 'telegram',
+            summary: `Ship mode: ${userMessage.substring(0, 100)}`,
+          });
+        }
+
         const devResult = await executeDeveloperTask(
           userMessage,
           getPrompt('gilfoyle'),
-          config.DEV_AGENT_CWD
+          config.DEV_AGENT_CWD,
+          {
+            shipMode: isShipMode,
+            onProgress: progressNotifier ?? undefined,
+          }
         );
 
         finalResponse = devResult.content;
@@ -182,16 +213,22 @@ export async function handleUserMessage(
           finalResponse += `\n\nFiles modified:\n${devResult.filesModified.map(f => '- ' + f).join('\n')}`;
         }
 
+        // Ship mode: append cost/turns summary
+        if (isShipMode) {
+          finalResponse += `\n\nShip mode summary: ${devResult.numTurns} turns, $${devResult.totalCostUsd.toFixed(2)}, ${devResult.filesModified.length} files`;
+        }
+
         await activityLogger.log({
           event_type: 'developer_action',
           agent_id: 'gilfoyle',
           task_id: subTask.id,
           channel: 'telegram',
-          summary: `Dev task (${devResult.numTurns} turns, ${devResult.durationMs}ms): ${userMessage.substring(0, 100)}`,
+          summary: `Dev task${isShipMode ? ' [SHIP]' : ''} (${devResult.numTurns} turns, ${devResult.durationMs}ms): ${userMessage.substring(0, 100)}`,
           metadata: {
             files_modified: devResult.filesModified,
             num_turns: devResult.numTurns,
             cost_usd: devResult.totalCostUsd,
+            ship_mode: isShipMode,
           },
         });
 
@@ -280,6 +317,22 @@ export async function handleUserMessage(
           }
         }
 
+        // If travel-agent, process any travel data action blocks
+        if (routing.target_agent_id === 'travel-agent') {
+          const travelResult = await processTravelActions(finalResponse, subTask.id);
+          finalResponse = travelResult.result;
+          if (travelResult.actionsTaken) {
+            await activityLogger.log({
+              event_type: 'travel_data_update',
+              agent_id: 'travel-agent',
+              task_id: subTask.id,
+              channel: 'travel',
+              summary: `Travel data: ${travelResult.actions.join(', ')}`,
+              metadata: { actions: travelResult.actions },
+            });
+          }
+        }
+
         // Complete sub-task
         await taskManager.completeTask(subTask.id, {
           content: agentResponse.content,
@@ -288,10 +341,84 @@ export async function handleUserMessage(
           durationMs: agentResponse.durationMs,
         });
       }
+    } else if (routing.action === 'multi_delegate' && routing.target_agent_ids && routing.target_agent_ids.length > 0) {
+      respondingAgent = 'alan-os';
+
+      // 5b. Multi-delegate: run multiple agents in parallel, then synthesize
+      await activityLogger.log({
+        event_type: 'multi_delegate',
+        agent_id: 'alan-os',
+        task_id: task.id,
+        channel: 'telegram',
+        summary: `Multi-delegate to: ${routing.target_agent_ids.join(', ')}`,
+        metadata: { agents: routing.target_agent_ids, reasoning: routing.reasoning },
+      });
+
+      // Run all agents in parallel
+      const agentResults = await Promise.all(
+        routing.target_agent_ids.map(async (agentId) => {
+          const subTask = await taskManager.createTask({
+            title: `${routing.task_title} (${agentId})`,
+            description: userMessage,
+            status: 'pending',
+            priority: routing.priority,
+            domain: routing.domain,
+            assigned_agent: agentId,
+            delegated_by: 'alan-os',
+            parent_task_id: task.id,
+            input_summary: userMessage,
+          });
+
+          try {
+            const response = await executor.run({
+              agentId,
+              taskId: subTask.id,
+              parentTaskId: task.id,
+              userMessage,
+              history: priorHistory,
+            });
+
+            await taskManager.completeTask(subTask.id, {
+              content: response.content,
+              tokensUsed: response.tokensUsed.total,
+              costCents: response.costCents,
+              durationMs: response.durationMs,
+            });
+
+            return { agentId, content: response.content, costCents: response.costCents, tokens: response.tokensUsed.total };
+          } catch (err) {
+            await taskManager.failTask(subTask.id, (err as Error).message);
+            return { agentId, content: `Error: ${(err as Error).message}`, costCents: 0, tokens: 0 };
+          }
+        })
+      );
+
+      // Accumulate costs
+      for (const r of agentResults) {
+        totalTokens += r.tokens;
+        totalCost += r.costCents;
+      }
+
+      // Synthesize results with alan-os
+      const synthesisPrompt = agentResults
+        .map(r => `## ${r.agentId} response:\n${r.content}`)
+        .join('\n\n');
+
+      const synthesisResponse = await executor.run({
+        agentId: 'alan-os',
+        taskId: task.id,
+        userMessage: `Synthesize these agent responses into a unified answer for the user.\n\nOriginal request: ${userMessage}\n\n${synthesisPrompt}`,
+        history: priorHistory,
+      });
+
+      finalResponse = synthesisResponse.content;
+      totalTokens += synthesisResponse.tokensUsed.total;
+      totalCost += synthesisResponse.costCents;
+
     } else {
       respondingAgent = 'alan-os';
 
-      // 5b. Alan OS handles directly (with history)
+      // 5c. Alan OS handles directly (with history)
       const agentResponse = await executor.run({
         agentId: 'alan-os',
         taskId: task.id,

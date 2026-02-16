@@ -16,8 +16,10 @@ export interface AgentResponse {
 }
 
 export interface RoutingDecision {
-  action: 'respond_directly' | 'delegate';
+  action: 'respond_directly' | 'delegate' | 'multi_delegate';
   target_agent_id?: string;
+  /** For multi_delegate: run multiple agents in parallel, alan-os synthesizes. */
+  target_agent_ids?: string[];
   reasoning: string;
   priority: 'urgent' | 'high' | 'normal' | 'low';
   domain?: string;

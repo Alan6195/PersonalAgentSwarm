@@ -17,6 +17,10 @@ import { processTwitterActions } from './twitter-actions';
 import { processEmailActions } from './email-actions';
 import { processGmailActions } from './gmail-actions';
 import { processWeddingDataActions } from './wedding-data-actions';
+import { buildProactiveContext } from './proactive-sweep';
+import { executeDeveloperTask } from './developer-executor';
+import { getPrompt } from '../agents/registry';
+import { checkBudget } from './cost-guardrails';
 
 interface CronJob {
   id: number;
@@ -126,10 +130,123 @@ async function runJob(job: CronJob): Promise<void> {
   const startTime = Date.now();
 
   try {
-    // Build the prompt: use prompt_override if set, otherwise the job description
-    const userMessage = job.prompt_override || job.description || job.name;
+    // Budget check before running cron jobs
+    try {
+      const budget = await checkBudget(job.agent_id);
+      if (!budget.allowed) {
+        console.warn(`[Cron] Budget exceeded for ${job.agent_id}: ${budget.reason}. Skipping "${job.name}".`);
+        const nextRun = calculateNextRun(job.schedule);
+        await query(
+          `UPDATE cron_jobs SET last_status = 'skipped', last_run_at = NOW(), next_run_at = $1, last_error = $2, updated_at = NOW() WHERE id = $3`,
+          [nextRun, `Budget: ${budget.reason}`, job.id]
+        );
+        await query(
+          `UPDATE cron_runs SET status = 'skipped', error_message = $1, completed_at = NOW() WHERE id = $2`,
+          [`Budget: ${budget.reason}`, run.id]
+        );
+        await taskManager.failTask(task.id, `Budget exceeded: ${budget.reason}`);
+        return;
+      }
+    } catch { /* non-critical: proceed if budget check fails */ }
 
-    // Run through the executor
+    // Build the prompt: use prompt_override if set, otherwise the job description
+    let userMessage = job.prompt_override || job.description || job.name;
+
+    // Proactive sweep: inject aggregated context before the prompt
+    const isProactiveSweep = job.name.toLowerCase().includes('proactive sweep');
+    if (isProactiveSweep) {
+      try {
+        const proactiveData = await buildProactiveContext();
+        userMessage = `${proactiveData}\n\n---\n\n${userMessage}`;
+        console.log(`[Cron] Injected proactive context for ${job.name}`);
+      } catch (err) {
+        console.warn('[Cron] Failed to build proactive context:', (err as Error).message);
+      }
+    }
+
+    // Gilfoyle dev queue: pick highest-priority pending item and run in ship mode
+    const isGilfoyleDevQueue = job.agent_id === 'gilfoyle' && job.name.toLowerCase().includes('night shift');
+    if (isGilfoyleDevQueue) {
+      const devItem = await queryOne<{ id: number; title: string; description: string; priority: number }>(
+        `SELECT id, title, description, priority FROM dev_queue
+         WHERE status = 'pending'
+         ORDER BY priority DESC, created_at ASC
+         LIMIT 1`
+      );
+
+      if (!devItem) {
+        console.log('[Cron] Gilfoyle Night Shift: No pending dev queue items. QUEUE_EMPTY.');
+        const durationMs = Date.now() - startTime;
+        const nextRun = calculateNextRun(job.schedule);
+        await query(`UPDATE cron_runs SET status = 'success', output_summary = 'QUEUE_EMPTY', duration_ms = $1, completed_at = NOW() WHERE id = $2`, [durationMs, run.id]);
+        await query(`UPDATE cron_jobs SET last_status = 'success', last_run_at = NOW(), next_run_at = $1, last_duration_ms = $2, run_count = run_count + 1, updated_at = NOW() WHERE id = $3`, [nextRun, durationMs, job.id]);
+        await taskManager.completeTask(task.id, { content: 'QUEUE_EMPTY', tokensUsed: 0, costCents: 0, durationMs });
+        return;
+      }
+
+      // Mark dev queue item as in_progress
+      await query(`UPDATE dev_queue SET status = 'in_progress', assigned_at = NOW(), task_id = $1, updated_at = NOW() WHERE id = $2`, [task.id, devItem.id]);
+
+      console.log(`[Cron] Gilfoyle Night Shift: Working on dev_queue #${devItem.id}: ${devItem.title}`);
+
+      await taskManager.setAgentStatus('gilfoyle', 'active');
+
+      const devResult = await executeDeveloperTask(
+        `Dev Queue Item #${devItem.id}: ${devItem.title}\n\n${devItem.description}`,
+        getPrompt('gilfoyle'),
+        config.DEV_AGENT_CWD,
+        {
+          shipMode: true,
+          onProgress: telegramNotify ?? undefined,
+        }
+      );
+
+      await taskManager.setAgentStatus('gilfoyle', 'idle');
+
+      // Update dev_queue with results
+      const devStatus = devResult.content.includes('failed') ? 'failed' : 'completed';
+      await query(
+        `UPDATE dev_queue SET
+          status = $1, completed_at = NOW(), result_summary = $2,
+          cost_usd = $3, turns_used = $4, files_modified = $5,
+          error_message = $6, updated_at = NOW()
+         WHERE id = $7`,
+        [
+          devStatus,
+          devResult.content.substring(0, 2000),
+          devResult.totalCostUsd,
+          devResult.numTurns,
+          JSON.stringify(devResult.filesModified),
+          devStatus === 'failed' ? devResult.content.substring(0, 500) : null,
+          devItem.id,
+        ]
+      );
+
+      const durationMs = Date.now() - startTime;
+      const costCents = Math.ceil(devResult.totalCostUsd * 100);
+
+      // Update cron tracking
+      await query(`UPDATE cron_runs SET status = 'success', tokens_used = $1, cost_cents = $2, duration_ms = $3, output_summary = $4, completed_at = NOW() WHERE id = $5`,
+        [devResult.totalTokens, costCents, durationMs, devResult.content.substring(0, 2000), run.id]);
+      const nextRun = calculateNextRun(job.schedule);
+      await query(`UPDATE cron_jobs SET last_status = 'success', last_run_at = NOW(), next_run_at = $1, last_duration_ms = $2, run_count = run_count + 1, updated_at = NOW() WHERE id = $3`,
+        [nextRun, durationMs, job.id]);
+      await taskManager.completeTask(task.id, { content: devResult.content, tokensUsed: devResult.totalTokens, costCents, durationMs });
+
+      // Notify via Telegram
+      if (telegramNotify) {
+        const filesStr = devResult.filesModified.length > 0
+          ? `\nFiles: ${devResult.filesModified.slice(0, 10).map(f => f.split('/').pop()).join(', ')}`
+          : '';
+        const notification = `*Gilfoyle Night Shift Complete*\n\nDev Queue #${devItem.id}: ${devItem.title}\nStatus: ${devStatus}\nTurns: ${devResult.numTurns} | Cost: $${devResult.totalCostUsd.toFixed(2)}${filesStr}\n\n${devResult.content.substring(0, 2000)}`;
+        try { await telegramNotify(notification); } catch { /* non-critical */ }
+      }
+
+      console.log(`[Cron] Gilfoyle Night Shift completed: dev_queue #${devItem.id} (${devResult.numTurns} turns, $${devResult.totalCostUsd.toFixed(2)})`);
+      return;
+    }
+
+    // Standard execution: run through the executor
     const agentResponse = await executor.run({
       agentId: job.agent_id,
       taskId: task.id,
@@ -273,6 +390,19 @@ async function runJob(job: CronJob): Promise<void> {
       try {
         await telegramNotify(notification);
       } catch { /* non-critical */ }
+    }
+
+    // Notify via Telegram for proactive sweeps (only if actionable, skip ALL_CLEAR)
+    if (isProactiveSweep && telegramNotify) {
+      const trimmed = finalResponse.trim();
+      if (!trimmed.includes('ALL_CLEAR') && trimmed.length > 20) {
+        const notification = `*Proactive Sweep (${job.name})*\n\n${finalResponse.substring(0, 3000)}`;
+        try {
+          await telegramNotify(notification);
+        } catch { /* non-critical */ }
+      } else {
+        console.log(`[Cron] Proactive sweep "${job.name}": ALL_CLEAR, no notification.`);
+      }
     }
 
     console.log(`[Cron] Job "${job.name}" completed (${durationMs}ms)`);
