@@ -41,9 +41,8 @@ export const config = {
   DEV_AGENT_SHIP_MAX_TURNS: parseInt(process.env.DEV_AGENT_SHIP_MAX_TURNS || '100', 10),
   DEV_AGENT_SHIP_MAX_BUDGET_USD: parseFloat(process.env.DEV_AGENT_SHIP_MAX_BUDGET_USD || '25.00'),
 
-  // Web search (Brave Search or Serper.dev)
-  SEARCH_API_KEY: process.env.SEARCH_API_KEY || '',
-  SEARCH_API_URL: process.env.SEARCH_API_URL || 'https://api.search.brave.com/res/v1/web/search',
+  // SerpAPI (Google Search, Hotels, Flights, Maps)
+  SERPAPI_KEY: process.env.SERPAPI_KEY || '',
 
   // Google Calendar
   GOOGLE_CALENDAR_CLIENT_ID: process.env.GOOGLE_CALENDAR_CLIENT_ID || '',
@@ -115,10 +114,10 @@ export function validateConfig(): void {
   console.log(`[Config] Developer agent: cwd=${config.DEV_AGENT_CWD}, maxTurns=${config.DEV_AGENT_MAX_TURNS}, maxBudget=$${config.DEV_AGENT_MAX_BUDGET_USD}`);
   console.log(`[Config] Ship mode: maxTurns=${config.DEV_AGENT_SHIP_MAX_TURNS}, maxBudget=$${config.DEV_AGENT_SHIP_MAX_BUDGET_USD}`);
 
-  if (config.SEARCH_API_KEY) {
-    console.log('[Config] Web search API configured; search features enabled.');
+  if (config.SERPAPI_KEY) {
+    console.log('[Config] SerpAPI configured; web search, hotels, flights, maps enabled.');
   } else {
-    console.log('[Config] SEARCH_API_KEY not set; web search disabled.');
+    console.log('[Config] SERPAPI_KEY not set; web search disabled.');
   }
 
   if (config.GOOGLE_CALENDAR_CLIENT_ID && config.GOOGLE_CALENDAR_REFRESH_TOKEN) {

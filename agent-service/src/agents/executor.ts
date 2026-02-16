@@ -269,46 +269,93 @@ export async function run(context: AgentContext): Promise<AgentResponse> {
         console.warn(`[Executor] Travel state fetch failed, continuing without:`, (travelErr as Error).message);
       }
 
-      // Always inject web search for travel-agent (it needs live pricing data)
+      // SerpAPI: structured search (hotels, flights, maps, general web)
       if (webSearch.isConfigured()) {
-        try {
-          // Run multiple targeted searches for comprehensive results
-          const queries: string[] = [];
-          const msg = context.userMessage.toLowerCase();
+        const msg = context.userMessage.toLowerCase();
+        const searchSections: string[] = [];
 
-          // Always do a general search based on the message
-          queries.push(`Portugal honeymoon ${context.userMessage} 2026`);
+        // Hotel search: use Google Hotels API for real pricing
+        if (/hotel|stay|room|accomm|where.*(sleep|stay)|lodging|boutique|resort/i.test(msg)) {
+          try {
+            // Extract location hint from message (default to broad Portugal query)
+            let hotelQuery = 'Portugal honeymoon hotel';
+            if (/porto/i.test(msg)) hotelQuery = 'Porto Portugal boutique hotel';
+            else if (/lisbon|lisboa/i.test(msg)) hotelQuery = 'Lisbon Portugal boutique hotel';
+            else if (/algarve|faro/i.test(msg)) hotelQuery = 'Algarve Portugal resort hotel';
+            else if (/alentejo|evora/i.test(msg)) hotelQuery = 'Alentejo Portugal hotel';
 
-          // Add hotel-specific search if mentioned
-          if (/hotel|stay|room|accomm|where.*(sleep|stay)|lodging/i.test(msg)) {
-            queries.push(`Portugal boutique hotel rates July 2026 king bed honeymoon`);
-          }
-          // Add transport search if mentioned
-          if (/transport|train|drive|car|bus|shuttle|get.*to|travel.*between|transfer/i.test(msg)) {
-            queries.push(`Portugal private transfer Porto Lisbon Algarve 2026 honeymoon couples`);
-          }
-          // Add restaurant search if mentioned
-          if (/restaurant|eat|food|dine|dinner|lunch|gluten.free|dairy.free/i.test(msg)) {
-            queries.push(`Portugal gluten free dairy free restaurant Porto Lisbon Algarve 2026`);
-          }
-
-          // Run up to 2 searches (first general, then most relevant specific)
-          const searchesToRun = queries.slice(0, 2);
-          const allResults: string[] = [];
-
-          for (const q of searchesToRun) {
-            const results = await webSearch.searchWeb(q, 5);
-            if (results.length > 0) {
-              allResults.push(webSearch.formatResultsForAgent(results));
+            const hotels = await webSearch.searchHotels({
+              query: hotelQuery,
+              checkIn: '2026-07-17',
+              checkOut: '2026-07-26',
+              adults: 2,
+              sortBy: 'highest_rating',
+            });
+            if (hotels.length > 0) {
+              searchSections.push(`## GOOGLE_HOTELS_RESULTS\nLive hotel pricing for July 17-26, 2026 (2 adults):\n\n${webSearch.formatHotelsForAgent(hotels)}`);
+              console.log(`[Executor] Injected ${hotels.length} hotel results for travel-agent`);
             }
+          } catch (err) {
+            console.warn('[Executor] Hotel search failed:', (err as Error).message);
           }
+        }
 
-          if (allResults.length > 0) {
-            agentPrompt += `\n\n## WEB_SEARCH_RESULTS\nLive search results for your research (use these for pricing verification and recommendations):\n\n${allResults.join('\n\n---\n\n')}`;
-            console.log(`[Executor] Injected ${allResults.length} web search batches for travel-agent`);
+        // Flight search: use Google Flights API
+        if (/flight|fly|airline|airport|plane|DEN|OPO|LIS/i.test(msg)) {
+          try {
+            let arrivalId = 'OPO'; // default Porto
+            if (/lisbon|lisboa|LIS/i.test(msg)) arrivalId = 'LIS';
+
+            const flights = await webSearch.searchFlights({
+              departureId: 'DEN',
+              arrivalId,
+              outboundDate: '2026-07-17',
+              returnDate: '2026-07-26',
+            });
+            if (flights.length > 0) {
+              searchSections.push(`## GOOGLE_FLIGHTS_RESULTS\nLive flight pricing DEN -> ${arrivalId} (Jul 17-26, 2026):\n\n${webSearch.formatFlightsForAgent(flights)}`);
+              console.log(`[Executor] Injected ${flights.length} flight results for travel-agent`);
+            }
+          } catch (err) {
+            console.warn('[Executor] Flight search failed:', (err as Error).message);
           }
-        } catch (searchErr) {
-          console.warn('[Executor] Web search for travel failed:', (searchErr as Error).message);
+        }
+
+        // Restaurant/activity search: use Google Maps API
+        if (/restaurant|eat|food|dine|dinner|lunch|gluten.free|dairy.free|things to do|activit|museum|tour|wine|vineyard/i.test(msg)) {
+          try {
+            let localQuery = 'best restaurants Portugal';
+            if (/porto/i.test(msg)) localQuery = 'best restaurants Porto Portugal';
+            else if (/lisbon|lisboa/i.test(msg)) localQuery = 'best restaurants Lisbon Portugal';
+            else if (/algarve/i.test(msg)) localQuery = 'best restaurants Algarve Portugal';
+            if (/gluten.free|dairy.free|allergy/i.test(msg)) localQuery += ' allergy friendly';
+            if (/activit|things to do|museum|tour/i.test(msg)) {
+              localQuery = localQuery.replace('restaurants', 'things to do');
+            }
+
+            const places = await webSearch.searchLocal({ query: localQuery });
+            if (places.length > 0) {
+              searchSections.push(`## GOOGLE_MAPS_RESULTS\nLocal places with ratings and reviews:\n\n${webSearch.formatLocalForAgent(places)}`);
+              console.log(`[Executor] Injected ${places.length} local results for travel-agent`);
+            }
+          } catch (err) {
+            console.warn('[Executor] Local search failed:', (err as Error).message);
+          }
+        }
+
+        // General web search: always run for broad context
+        try {
+          const results = await webSearch.searchWeb(`Portugal honeymoon ${context.userMessage} 2026`, 5);
+          if (results.length > 0) {
+            searchSections.push(`## WEB_SEARCH_RESULTS\nGeneral web results:\n\n${webSearch.formatResultsForAgent(results)}`);
+          }
+        } catch (err) {
+          console.warn('[Executor] General web search failed:', (err as Error).message);
+        }
+
+        if (searchSections.length > 0) {
+          agentPrompt += '\n\n' + searchSections.join('\n\n');
+          console.log(`[Executor] Injected ${searchSections.length} SerpAPI search sections for travel-agent`);
         }
       }
     }
