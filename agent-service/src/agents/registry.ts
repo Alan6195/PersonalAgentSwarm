@@ -1,5 +1,8 @@
 import { config } from '../config';
 import { AgentDefinition } from './types';
+import { loadSoul, hasSoul } from '../services/memory-files';
+
+// Legacy .ts prompt imports (fallback if no SOUL.md file exists)
 import { alanOsPrompt } from './prompts/alan-os';
 import { ascendBuilderPrompt } from './prompts/ascend-builder';
 import { legalAdvisorPrompt } from './prompts/legal-advisor';
@@ -11,31 +14,60 @@ import { commsDrafterPrompt } from './prompts/comms-drafter';
 import { gilfoylePrompt } from './prompts/gilfoyle';
 import { travelAgentPrompt } from './prompts/travel-agent';
 
-const agents: Record<string, AgentDefinition> = {
-  'alan-os':          { prompt: alanOsPrompt,          model: config.DEEP_MODEL },
-  'ascend-builder':   { prompt: ascendBuilderPrompt,   model: config.DEEP_MODEL },
-  'legal-advisor':    { prompt: legalAdvisorPrompt,     model: config.DEEP_MODEL },
-  'social-media':     { prompt: socialMediaPrompt,      model: config.ROUTER_MODEL },
-  'wedding-planner':  { prompt: weddingPlannerPrompt,   model: config.ROUTER_MODEL },
-  'life-admin':       { prompt: lifeAdminPrompt,        model: config.ROUTER_MODEL },
-  'research-analyst': { prompt: researchAnalystPrompt,  model: config.DEEP_MODEL },
-  'comms-drafter':    { prompt: commsDrafterPrompt,     model: config.ROUTER_MODEL },
-  'gilfoyle':         { prompt: gilfoylePrompt,          model: config.DEEP_MODEL },
-  'travel-agent':     { prompt: travelAgentPrompt,       model: config.DEEP_MODEL },
+// Fallback prompts from .ts files (used only if SOUL.md doesn't exist)
+const fallbackPrompts: Record<string, string> = {
+  'alan-os': alanOsPrompt,
+  'ascend-builder': ascendBuilderPrompt,
+  'legal-advisor': legalAdvisorPrompt,
+  'social-media': socialMediaPrompt,
+  'wedding-planner': weddingPlannerPrompt,
+  'life-admin': lifeAdminPrompt,
+  'research-analyst': researchAnalystPrompt,
+  'comms-drafter': commsDrafterPrompt,
+  'gilfoyle': gilfoylePrompt,
+  'travel-agent': travelAgentPrompt,
 };
 
+// Model assignments per agent
+const agentModels: Record<string, string> = {
+  'alan-os': config.DEEP_MODEL,
+  'ascend-builder': config.DEEP_MODEL,
+  'legal-advisor': config.DEEP_MODEL,
+  'social-media': config.ROUTER_MODEL,
+  'wedding-planner': config.ROUTER_MODEL,
+  'life-admin': config.ROUTER_MODEL,
+  'research-analyst': config.DEEP_MODEL,
+  'comms-drafter': config.ROUTER_MODEL,
+  'gilfoyle': config.DEEP_MODEL,
+  'travel-agent': config.DEEP_MODEL,
+};
+
+/**
+ * Get the prompt for an agent. Reads from SOUL.md on disk (hot-reloadable),
+ * falling back to the compiled .ts export if no .md file exists.
+ */
 export function getPrompt(agentId: string): string {
-  const agent = agents[agentId];
-  if (!agent) throw new Error(`Unknown agent: ${agentId}`);
-  return agent.prompt;
+  if (!agentModels[agentId]) throw new Error(`Unknown agent: ${agentId}`);
+
+  // Tier 1: load from SOUL.md on disk (hot-reloadable, Gilfoyle-editable)
+  if (hasSoul(agentId)) {
+    const soul = loadSoul(agentId);
+    if (soul.length > 0) return soul;
+  }
+
+  // Fallback: compiled .ts prompt
+  const fallback = fallbackPrompts[agentId];
+  if (fallback) return fallback;
+
+  throw new Error(`No prompt found for agent: ${agentId}`);
 }
 
 export function getModel(agentId: string): string {
-  const agent = agents[agentId];
-  if (!agent) throw new Error(`Unknown agent: ${agentId}`);
-  return agent.model;
+  const model = agentModels[agentId];
+  if (!model) throw new Error(`Unknown agent: ${agentId}`);
+  return model;
 }
 
 export function getAllAgentIds(): string[] {
-  return Object.keys(agents);
+  return Object.keys(agentModels);
 }

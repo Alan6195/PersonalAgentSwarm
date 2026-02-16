@@ -66,6 +66,7 @@ services:
     volumes:
       - /opt/mission-control:/opt/mission-control
       - /var/run/docker.sock:/var/run/docker.sock
+      - agent_memory:/app/data/memory
     depends_on:
       db:
         condition: service_healthy
@@ -87,3 +88,4 @@ volumes:
   pgdata:
   caddy_data:
   caddy_config:
+  agent_memory:

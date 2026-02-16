@@ -9,6 +9,7 @@ import { processEmailActions } from '../services/email-actions';
 import { processGmailActions } from '../services/gmail-actions';
 import { processWeddingDataActions } from '../services/wedding-data-actions';
 import { processTravelActions } from '../services/travel-actions';
+import { processMemoryUpdate } from '../services/memory-files';
 import { executeDeveloperTask } from '../services/developer-executor';
 import { getPrompt } from './registry';
 import * as memory from '../services/conversation-memory';
@@ -234,6 +235,13 @@ export async function handleUserMessage(
 
         await taskManager.setAgentStatus('gilfoyle', 'idle');
 
+        // Process [MEMORY_UPDATE] for Gilfoyle (Tier 1 working memory)
+        {
+          const memResult = processMemoryUpdate('gilfoyle', finalResponse);
+          finalResponse = memResult.result;
+          if (memResult.updated) console.log(`[Router] Updated MEMORY.md for gilfoyle`);
+        }
+
         // Complete sub-task
         await taskManager.completeTask(subTask.id, {
           content: devResult.content,
@@ -333,6 +341,15 @@ export async function handleUserMessage(
           }
         }
 
+        // Process [MEMORY_UPDATE] blocks for ALL agents (Tier 1 working memory)
+        {
+          const memResult = processMemoryUpdate(routing.target_agent_id!, finalResponse);
+          finalResponse = memResult.result;
+          if (memResult.updated) {
+            console.log(`[Router] Updated MEMORY.md for ${routing.target_agent_id}`);
+          }
+        }
+
         // Complete sub-task
         await taskManager.completeTask(subTask.id, {
           content: agentResponse.content,
@@ -415,6 +432,19 @@ export async function handleUserMessage(
       totalTokens += synthesisResponse.tokensUsed.total;
       totalCost += synthesisResponse.costCents;
 
+      // Process [MEMORY_UPDATE] for each multi-delegated agent's raw response
+      for (const r of agentResults) {
+        const memResult = processMemoryUpdate(r.agentId, r.content);
+        if (memResult.updated) console.log(`[Router] Updated MEMORY.md for ${r.agentId}`);
+      }
+
+      // Process [MEMORY_UPDATE] for alan-os synthesis
+      {
+        const memResult = processMemoryUpdate('alan-os', finalResponse);
+        finalResponse = memResult.result;
+        if (memResult.updated) console.log(`[Router] Updated MEMORY.md for alan-os (synthesis)`);
+      }
+
     } else {
       respondingAgent = 'alan-os';
 
@@ -429,6 +459,13 @@ export async function handleUserMessage(
       finalResponse = agentResponse.content;
       totalTokens = agentResponse.tokensUsed.total;
       totalCost = agentResponse.costCents;
+
+      // Process [MEMORY_UPDATE] for alan-os (Tier 1 working memory)
+      {
+        const memResult = processMemoryUpdate('alan-os', finalResponse);
+        finalResponse = memResult.result;
+        if (memResult.updated) console.log(`[Router] Updated MEMORY.md for alan-os`);
+      }
     }
 
     // 6. Record assistant response in conversation memory

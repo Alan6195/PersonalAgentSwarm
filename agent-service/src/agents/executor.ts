@@ -3,6 +3,7 @@ import { getPrompt, getModel } from './registry';
 import { callClaude } from '../services/claude';
 import * as taskManager from '../services/task-manager';
 import * as agentMemory from '../services/agent-memory';
+import * as memoryFiles from '../services/memory-files';
 import * as xpSystem from '../services/xp-system';
 import * as outlookMail from '../services/outlook-mail';
 import * as gmailMail from '../services/gmail-mail';
@@ -13,7 +14,7 @@ import * as googleCalendar from '../services/google-calendar';
 import * as travelStateService from '../services/travel-state';
 import { query as dbQuery } from '../db';
 
-// All agents use persistent semantic memory
+// All agents use persistent semantic memory (Tier 2: on-demand keyword recall)
 const MEMORY_AGENTS = new Set([
   'alan-os', 'ascend-builder', 'legal-advisor', 'social-media',
   'wedding-planner', 'life-admin', 'research-analyst', 'comms-drafter', 'gilfoyle', 'travel-agent',
@@ -31,17 +32,29 @@ export async function run(context: AgentContext): Promise<AgentResponse> {
   await taskManager.updateTaskStatus(context.taskId, 'in_progress');
 
   try {
-    // For memory-enabled agents, recall relevant context and inject into system prompt
+    // Tier 1: Always-on working memory (MEMORY.md loaded every message)
+    try {
+      const workingMemory = memoryFiles.loadMemory(context.agentId);
+      if (workingMemory.length > 0) {
+        const formatted = memoryFiles.formatMemoryForPrompt(workingMemory);
+        agentPrompt += formatted;
+        console.log(`[Executor] Tier 1: Loaded MEMORY.md for ${context.agentId} (${workingMemory.length} chars)`);
+      }
+    } catch (t1Err) {
+      console.warn(`[Executor] Tier 1 memory load failed for ${context.agentId}:`, (t1Err as Error).message);
+    }
+
+    // Tier 2: On-demand keyword-matched historical recall
     if (MEMORY_AGENTS.has(context.agentId)) {
       try {
         const memories = await agentMemory.recall(context.agentId, context.userMessage, 8);
         if (memories.length > 0) {
           const memoryContext = agentMemory.formatMemoriesAsContext(memories);
           agentPrompt = `${agentPrompt}\n\n${memoryContext}`;
-          console.log(`[Executor] Injected ${memories.length} memories for ${context.agentId}`);
+          console.log(`[Executor] Tier 2: Injected ${memories.length} historical memories for ${context.agentId}`);
         }
       } catch (memErr) {
-        console.warn(`[Executor] Memory recall failed for ${context.agentId}, continuing without:`, (memErr as Error).message);
+        console.warn(`[Executor] Tier 2 memory recall failed for ${context.agentId}, continuing without:`, (memErr as Error).message);
       }
     }
 

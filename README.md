@@ -52,8 +52,14 @@ Gmail integration for vendor communications. Budget tracker with 20+ categories.
 ### Proactive Intelligence
 Three daily sweeps (7am, 1pm, 6pm) aggregate email counts, wedding deadlines, calendar events, cost tracking, and agent health into actionable briefings.
 
-### Persistent Memory
-All agents use semantic memory (pgvector embeddings). Past conversations, decisions, and preferences are recalled automatically for continuity across sessions.
+### Two-Tier Persistent Memory
+All agents have persistent memory across conversations using a two-tier architecture:
+
+**Tier 1 (Always-On):** Each agent has two markdown files loaded into every single message:
+- `SOUL.md`: Agent identity, personality, instructions, capabilities. Hot-reloadable from disk without Docker rebuild. Gilfoyle can edit these at runtime for self-improvement.
+- `MEMORY.md`: Working scratchpad with active projects, recent decisions, pending actions. Agents self-update via `[MEMORY_UPDATE]` blocks in their responses. Capped at 3000 chars with automatic compaction.
+
+**Tier 2 (On-Demand Recall):** Keyword-matched historical memories from PostgreSQL `agent_memory` table. Past conversations, decisions, and preferences are recalled automatically when relevant keywords appear in the current message.
 
 ### Cost Guardrails
 Daily budget limits ($50/day, $10/agent). Alerts at 80% threshold. Cron jobs auto-skip when over budget.
@@ -85,6 +91,32 @@ Complex requests can be routed to multiple agents in parallel. Alan OS synthesiz
 - **Deployment**: Docker Compose, Caddy (reverse proxy + auto SSL), DigitalOcean VPS
 - **Typography**: JetBrains Mono + DM Sans
 
+## Memory File Structure
+
+```
+agent-service/data/
+  souls/              # SOUL.md files (agent identity, hot-reloadable)
+    alan-os.md
+    ascend-builder.md
+    gilfoyle.md
+    legal-advisor.md
+    research-analyst.md
+    social-media.md
+    wedding-planner.md
+    life-admin.md
+    comms-drafter.md
+    travel-agent.md
+  memory/             # MEMORY.md files (working scratchpad, Docker volume)
+    alan-os.md
+    ascend-builder.md
+    gilfoyle.md
+    ...
+```
+
+SOUL.md files are copied into the container at build time. MEMORY.md files live on a named Docker volume (`agent_memory`) so they persist across container rebuilds.
+
+The registry (`agent-service/src/agents/registry.ts`) loads SOUL.md from disk at runtime, falling back to compiled `.ts` prompt exports if no `.md` file exists. This means you can edit an agent's personality by modifying its SOUL.md and the change takes effect on the next message, with no rebuild needed.
+
 ## Database Schema
 
 12 tables:
@@ -95,7 +127,7 @@ Complex requests can be routed to multiple agents in parallel. Alan OS synthesiz
 - `cost_events`: Per-request token and cost tracking
 - `cost_daily`: Rolled-up daily cost summaries
 - `activity_log`: Event stream for analytics
-- `agent_memories`: Semantic memory with pgvector embeddings
+- `agent_memory`: Keyword-matched historical memory (Tier 2 recall)
 - `travel_trips`: Trip state (status, budget, preferences, notes)
 - `travel_items`: Hotels, activities, restaurants, transport with JSONB metadata
 - `travel_vetoes`: Items ruled out (never suggested again)
