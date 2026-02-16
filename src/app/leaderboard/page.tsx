@@ -3,7 +3,7 @@
 import { useFetch } from "@/lib/hooks";
 import { formatCost, cn } from "@/lib/utils";
 import type { Agent } from "@/types";
-import { Trophy, Flame, Star, TrendingUp, Zap } from "lucide-react";
+import { Trophy, Flame, Star, TrendingUp, Zap, ArrowUp, ArrowDown } from "lucide-react";
 
 const LEVEL_THRESHOLDS = [0, 100, 300, 600, 1000, 1500, 2500, 4000, 6000, 10000];
 
@@ -29,12 +29,50 @@ function getLevelColor(level: number): string {
   return "text-carbon-400";
 }
 
+/** Top performers get fire, bottom performers get mood indicators */
+function getPerformanceIndicator(rank: number, total: number, xp: number, tasks: number): {
+  emoji: string;
+  label: string;
+  color: string;
+} | null {
+  if (total < 2) return null;
+
+  // Top performer(s): fire
+  if (rank === 1 && xp > 0) {
+    return { emoji: "\uD83D\uDD25", label: "On fire", color: "text-orange-400" };
+  }
+  if (rank === 2 && xp > 0) {
+    return { emoji: "\uD83D\uDD25", label: "Hot", color: "text-orange-400" };
+  }
+
+  // Bottom 25%: sad/cold indicators
+  const bottomThreshold = Math.max(2, Math.ceil(total * 0.75));
+  if (rank >= bottomThreshold) {
+    if (xp === 0 && tasks === 0) {
+      return { emoji: "\uD83D\uDCA4", label: "Dormant", color: "text-carbon-600" };
+    }
+    if (rank === total) {
+      return { emoji: "\uD83D\uDE1E", label: "Needs work", color: "text-red-400" };
+    }
+    return { emoji: "\uD83E\uDD76", label: "Cold", color: "text-blue-300" };
+  }
+
+  // Agents with active streaks get a small flame regardless of rank
+  return null;
+}
+
 export default function LeaderboardPage() {
   const { data: agents, loading } = useFetch<Agent[]>("/api/leaderboard", 30000);
 
   const totalXp = agents?.reduce((sum, a) => sum + (a.xp || 0), 0) || 0;
   const topAgent = agents?.[0];
   const longestStreak = agents?.reduce((max, a) => Math.max(max, a.best_streak || 0), 0) || 0;
+  const totalAgents = agents?.length || 0;
+
+  // Find hardest worker (most tasks completed)
+  const hardestWorker = agents?.reduce((best, a) =>
+    (a.total_tasks || 0) > (best?.total_tasks || 0) ? a : best
+  , agents?.[0] || null);
 
   return (
     <div className="space-y-6">
@@ -65,7 +103,9 @@ export default function LeaderboardPage() {
             <Star className="w-4 h-4 text-amber-400" />
             <span className="text-xs text-carbon-500 font-mono uppercase">Top Agent</span>
           </div>
-          <p className="stat-value text-amber-400 text-lg">{topAgent?.name || "..."}</p>
+          <p className="stat-value text-amber-400 text-lg">
+            {topAgent?.name || "..."} {topAgent && (topAgent.xp || 0) > 0 ? "\uD83D\uDD25" : ""}
+          </p>
           <p className="text-xs text-carbon-500">{topAgent?.level_title}</p>
         </div>
         <div className="card p-4">
@@ -78,9 +118,14 @@ export default function LeaderboardPage() {
         <div className="card p-4">
           <div className="flex items-center gap-2 mb-1">
             <TrendingUp className="w-4 h-4 text-neon-blue" />
-            <span className="text-xs text-carbon-500 font-mono uppercase">Agents</span>
+            <span className="text-xs text-carbon-500 font-mono uppercase">Hardest Worker</span>
           </div>
-          <p className="stat-value text-neon-blue">{agents?.length || 0}</p>
+          <p className="stat-value text-neon-blue text-lg">
+            {hardestWorker?.name || "..."} {hardestWorker && (hardestWorker.total_tasks || 0) > 0 ? "\uD83D\uDCAA" : ""}
+          </p>
+          <p className="text-xs text-carbon-500">
+            {hardestWorker ? `${hardestWorker.total_tasks || 0} tasks` : ""}
+          </p>
         </div>
       </div>
 
@@ -93,19 +138,27 @@ export default function LeaderboardPage() {
             {agents?.map((agent, index) => {
               const rank = index + 1;
               const progress = getXpProgress(agent.xp || 0, agent.level || 1);
+              const perfIndicator = getPerformanceIndicator(rank, totalAgents, agent.xp || 0, agent.total_tasks || 0);
+
               return (
                 <div
                   key={agent.id}
                   className={cn(
                     "flex items-center gap-4 px-6 py-4 transition-colors hover:bg-carbon-900/50",
-                    rank <= 3 && "bg-carbon-900/30"
+                    rank <= 3 && "bg-carbon-900/30",
+                    rank === totalAgents && (agent.xp || 0) === 0 && "opacity-60"
                   )}
                 >
-                  {/* Rank */}
-                  <div className="w-10 text-center text-lg font-bold shrink-0">
-                    <span className={rank <= 3 ? "text-amber-400" : "text-carbon-600"}>
+                  {/* Rank + performance indicator */}
+                  <div className="w-12 text-center shrink-0">
+                    <span className={cn("text-lg font-bold", rank <= 3 ? "text-amber-400" : "text-carbon-600")}>
                       {getRankEmoji(rank)}
                     </span>
+                    {perfIndicator && (
+                      <div className="text-xs mt-0.5" title={perfIndicator.label}>
+                        {perfIndicator.emoji}
+                      </div>
+                    )}
                   </div>
 
                   {/* Agent Avatar */}
@@ -126,6 +179,17 @@ export default function LeaderboardPage() {
                       <span className="text-xs text-carbon-500 font-mono">
                         {agent.level_title || "Intern"}
                       </span>
+                      {/* Rank trend indicator */}
+                      {rank <= 2 && (agent.xp || 0) > 0 && (
+                        <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                          <ArrowUp className="w-2.5 h-2.5" /> Top {rank === 1 ? "performer" : "tier"}
+                        </span>
+                      )}
+                      {rank >= totalAgents - 1 && totalAgents > 3 && (agent.xp || 0) === 0 && (
+                        <span className="text-[10px] font-mono text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                          <ArrowDown className="w-2.5 h-2.5" /> Needs attention
+                        </span>
+                      )}
                     </div>
                     {/* XP Progress Bar */}
                     <div className="mt-1.5 flex items-center gap-3">
@@ -144,8 +208,8 @@ export default function LeaderboardPage() {
                     </div>
                   </div>
 
-                  {/* Streak */}
-                  <div className="text-right shrink-0 w-20">
+                  {/* Streak + tasks */}
+                  <div className="text-right shrink-0 w-24">
                     {(agent.streak || 0) > 0 && (
                       <div className="flex items-center justify-end gap-1">
                         <Flame className="w-3.5 h-3.5 text-orange-400" />
@@ -155,7 +219,7 @@ export default function LeaderboardPage() {
                       </div>
                     )}
                     <span className="text-xs text-carbon-600 font-mono">
-                      {agent.total_tasks} tasks
+                      {agent.total_tasks || 0} tasks
                     </span>
                   </div>
 

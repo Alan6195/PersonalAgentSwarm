@@ -21,6 +21,8 @@ export interface ShipModeOptions {
   onProgress?: (update: string) => Promise<void>;
 }
 
+// Safety guardrails: block only truly destructive system-level commands.
+// Gilfoyle has full repo access including deploy, merge, push, docker compose.
 const BLOCKED_PATTERNS = [
   'rm -rf /',
   'rm -rf /*',
@@ -32,14 +34,10 @@ const BLOCKED_PATTERNS = [
   'reboot',
   'halt',
   'poweroff',
-  'docker rm -f',
-  'docker system prune -a',
   'git push --force origin main',
   'git push --force origin master',
   'git push -f origin main',
   'git push -f origin master',
-  'git reset --hard',
-  'git clean -fd',
   'DROP DATABASE',
   'DROP TABLE',
   'TRUNCATE',

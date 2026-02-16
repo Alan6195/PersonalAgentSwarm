@@ -218,17 +218,29 @@ export async function getLeaderboard(): Promise<LeaderboardEntry[]> {
 
 export function formatLeaderboardForTelegram(entries: LeaderboardEntry[]): string {
   const medals = ['🥇', '🥈', '🥉'];
-  const lines: string[] = ['*Agent Leaderboard*\n'];
+  const total = entries.length;
+  const lines: string[] = ['*🏆 Agent Leaderboard*\n'];
 
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
-    const rank = medals[i] ?? `${i + 1}.`;
+    const rank = i + 1;
+    const medal = medals[i] ?? `${rank}.`;
     const levelInfo = getLevelInfo(e.xp);
     const progressBar = renderProgressBar(levelInfo.progress);
     const streakText = e.streak >= 3 ? ` 🔥${e.streak}` : '';
 
+    // Performance indicators: fire for top, sad for bottom
+    let perfEmoji = '';
+    if (rank === 1 && e.xp > 0) perfEmoji = ' 🔥🔥';
+    else if (rank === 2 && e.xp > 0) perfEmoji = ' 🔥';
+    else if (rank >= Math.ceil(total * 0.75) && total > 3) {
+      if (e.xp === 0 && e.total_tasks === 0) perfEmoji = ' 💤';
+      else if (rank === total) perfEmoji = ' 😞';
+      else perfEmoji = ' 🥶';
+    }
+
     lines.push(
-      `${rank} *${e.name}* (Lv.${e.level} ${e.level_title})` +
+      `${medal} *${e.name}* (Lv.${e.level} ${e.level_title})${perfEmoji}` +
         `\n   ${e.xp} XP ${progressBar}${streakText}` +
         `\n   ${e.total_tasks} tasks completed`
     );

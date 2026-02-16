@@ -17,6 +17,11 @@ import {
   Ban,
   DollarSign,
   Star,
+  Bed,
+  Car,
+  Image,
+  Heart,
+  Sparkles,
 } from "lucide-react";
 
 // ────────────────────────────────────────────
@@ -158,45 +163,113 @@ function StatCard({
 
 function HotelCard({ item }: { item: TravelItem }) {
   const style = STATUS_STYLES[item.status] || STATUS_STYLES.proposed;
+  const meta = item.metadata || {};
+  const imageUrl = meta.image_url;
+  const bedType = meta.bed_type;
+  const description = meta.description;
+  const stars = meta.stars;
+  const honeymoonPkg = meta.honeymoon_package;
+
   return (
-    <div className="bg-carbon-800/40 rounded-lg p-3 border border-carbon-700/50">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Hotel className="w-4 h-4 text-amber-400 shrink-0" />
-          <div>
-            <p className="text-sm font-medium text-white">{item.name}</p>
-            {item.nightly_rate_eur && (
-              <p className="text-xs font-mono text-carbon-400 mt-0.5">
-                EUR {item.nightly_rate_eur}/night
-                {item.nights ? ` x ${item.nights} nights` : ""}
-                {item.cost_eur ? ` = EUR ${item.cost_eur}` : ""}
-              </p>
+    <div className="bg-carbon-800/40 rounded-lg border border-carbon-700/50 overflow-hidden">
+      {/* Hotel image */}
+      {imageUrl && (
+        <div className="relative h-36 w-full bg-carbon-900">
+          <img
+            src={imageUrl}
+            alt={item.name}
+            className="w-full h-full object-cover opacity-90"
+            onError={(e) => {
+              (e.target as HTMLImageElement).style.display = "none";
+            }}
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-carbon-900/80 via-transparent to-transparent" />
+          <div className="absolute bottom-2 left-3 flex items-center gap-2">
+            <span className={cn("badge text-[10px]", style.bg, style.text)}>
+              {style.label}
+            </span>
+            {bedType && (
+              <span className="badge text-[10px] bg-purple-500/15 text-purple-400 flex items-center gap-0.5">
+                <Bed className="w-2.5 h-2.5" /> {bedType}
+              </span>
+            )}
+            {honeymoonPkg && (
+              <span className="badge text-[10px] bg-pink-500/15 text-pink-400 flex items-center gap-0.5">
+                <Heart className="w-2.5 h-2.5" /> Honeymoon
+              </span>
             )}
           </div>
         </div>
-        <span className={cn("badge text-[10px] shrink-0", style.bg, style.text)}>
-          {style.label}
-        </span>
-      </div>
-      {item.notes && (
-        <p className="text-xs text-carbon-500 mt-2 leading-relaxed">{item.notes}</p>
       )}
-      <div className="flex items-center gap-3 mt-2">
-        {item.booking_url && (
-          <a
-            href={item.booking_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[10px] font-mono text-amber-400/70 hover:text-amber-400 flex items-center gap-1 transition-colors"
-          >
-            <ExternalLink className="w-3 h-3" /> Book
-          </a>
+
+      <div className="p-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Hotel className="w-4 h-4 text-amber-400 shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-white">
+                {item.name}
+                {stars && (
+                  <span className="ml-1.5 text-amber-400/80 text-xs">
+                    {"★".repeat(Number(stars))}
+                  </span>
+                )}
+              </p>
+              {item.nightly_rate_eur && (
+                <p className="text-xs font-mono text-carbon-400 mt-0.5">
+                  EUR {item.nightly_rate_eur}/night
+                  {item.nights ? ` x ${item.nights} nights` : ""}
+                  {item.cost_eur ? ` = EUR ${item.cost_eur}` : ""}
+                </p>
+              )}
+            </div>
+          </div>
+          {/* Status badge only shows here if no image (image has its own badges) */}
+          {!imageUrl && (
+            <div className="flex items-center gap-1.5 shrink-0">
+              {bedType && (
+                <span className="badge text-[10px] bg-purple-500/15 text-purple-400 flex items-center gap-0.5">
+                  <Bed className="w-2.5 h-2.5" /> {bedType}
+                </span>
+              )}
+              <span className={cn("badge text-[10px]", style.bg, style.text)}>
+                {style.label}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Description */}
+        {description && (
+          <p className="text-xs text-carbon-400 mt-2 leading-relaxed">{description}</p>
         )}
-        {item.confirmation_number && (
-          <span className="text-[10px] font-mono text-emerald-400">
-            Conf: {item.confirmation_number}
-          </span>
+
+        {item.notes && (
+          <p className="text-xs text-carbon-500 mt-1.5 leading-relaxed">{item.notes}</p>
         )}
+
+        <div className="flex items-center gap-3 mt-2">
+          {item.booking_url && (
+            <a
+              href={item.booking_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[10px] font-mono text-amber-400/70 hover:text-amber-400 flex items-center gap-1 transition-colors"
+            >
+              <ExternalLink className="w-3 h-3" /> Book
+            </a>
+          )}
+          {item.confirmation_number && (
+            <span className="text-[10px] font-mono text-emerald-400">
+              ✅ Conf: {item.confirmation_number}
+            </span>
+          )}
+          {honeymoonPkg && !imageUrl && (
+            <span className="text-[10px] font-mono text-pink-400/70 flex items-center gap-0.5">
+              <Heart className="w-2.5 h-2.5" /> Honeymoon pkg
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -207,16 +280,25 @@ function HotelCard({ item }: { item: TravelItem }) {
 // ────────────────────────────────────────────
 
 function ActivityCard({ item }: { item: TravelItem }) {
+  const meta = item.metadata || {};
   return (
     <div className="flex items-start gap-2 py-1.5">
       <Wine className="w-3.5 h-3.5 text-purple-400 mt-0.5 shrink-0" />
       <div className="flex-1 min-w-0">
         <p className="text-xs text-carbon-200">{item.name}</p>
+        {meta.description && (
+          <p className="text-[10px] text-carbon-500 mt-0.5">{meta.description}</p>
+        )}
         <div className="flex items-center gap-2 mt-0.5">
           {item.time && (
             <span className="text-[10px] font-mono text-carbon-500">
               <Clock className="w-2.5 h-2.5 inline mr-0.5" />
               {item.time}
+            </span>
+          )}
+          {meta.duration && (
+            <span className="text-[10px] font-mono text-carbon-500">
+              {meta.duration}
             </span>
           )}
           {item.cost_per_person_eur && (
@@ -230,6 +312,16 @@ function ActivityCard({ item }: { item: TravelItem }) {
             </span>
           )}
         </div>
+        {item.booking_url && (
+          <a
+            href={item.booking_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[10px] font-mono text-purple-400/70 hover:text-purple-400 flex items-center gap-1 mt-0.5 transition-colors"
+          >
+            <ExternalLink className="w-2.5 h-2.5" /> Book
+          </a>
+        )}
       </div>
     </div>
   );
@@ -322,13 +414,42 @@ function DayCard({ day }: { day: DayEntry }) {
         <div className="px-4 pb-4 pt-2 space-y-3">
           {/* Transport arrival */}
           {day.transport && (
-            <div className="flex items-center gap-2 text-xs text-carbon-400 bg-carbon-800/30 rounded-lg px-3 py-2">
-              <Train className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-              <span>
-                Arrive via: {day.transport.name}
-                {day.transport.cost_eur ? ` (EUR ${day.transport.cost_eur})` : ""}
-                {day.transport.metadata?.duration ? ` | ${day.transport.metadata.duration}` : ""}
-              </span>
+            <div className="bg-carbon-800/30 rounded-lg px-3 py-2.5 border border-carbon-700/30">
+              <div className="flex items-center gap-2 text-xs text-carbon-300">
+                {day.transport.name.toLowerCase().includes("train") ? (
+                  <Train className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                ) : day.transport.name.toLowerCase().includes("car") || day.transport.name.toLowerCase().includes("drive") ? (
+                  <Car className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                ) : (
+                  <MapPin className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                )}
+                <span className="font-medium">{day.transport.name}</span>
+              </div>
+              <div className="flex items-center gap-3 mt-1 ml-5.5">
+                {day.transport.metadata?.duration && (
+                  <span className="text-[10px] font-mono text-carbon-500 flex items-center gap-0.5">
+                    <Clock className="w-2.5 h-2.5" /> {day.transport.metadata.duration}
+                  </span>
+                )}
+                {day.transport.cost_eur && (
+                  <span className="text-[10px] font-mono text-amber-400/70">
+                    EUR {day.transport.cost_eur}
+                  </span>
+                )}
+                {day.transport.booking_url && (
+                  <a
+                    href={day.transport.booking_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] font-mono text-cyan-400/70 hover:text-cyan-400 flex items-center gap-0.5 transition-colors"
+                  >
+                    <ExternalLink className="w-2.5 h-2.5" /> Book
+                  </a>
+                )}
+              </div>
+              {day.transport.notes && (
+                <p className="text-[10px] text-carbon-600 mt-1 ml-5.5">{day.transport.notes}</p>
+              )}
             </div>
           )}
 
@@ -425,7 +546,7 @@ export default function TravelPage() {
   const proposed = items.filter((i) => i.status === "proposed").length;
 
   // Countdown
-  const tripStart = new Date("2026-07-16");
+  const tripStart = new Date("2026-07-17");
   const now = new Date();
   const daysToTrip = Math.ceil(
     (tripStart.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
@@ -444,7 +565,7 @@ export default function TravelPage() {
             Portugal Honeymoon
           </h1>
           <p className="text-sm text-carbon-500 font-mono mt-1">
-            July 16-26, 2026{" "}
+            July 17-26, 2026{" "}
             <span className="text-carbon-600">|</span> Porto to Algarve{" "}
             <span className="text-carbon-600">|</span>{" "}
             <span className={cn(
@@ -466,7 +587,7 @@ export default function TravelPage() {
         <StatCard
           label="Days to Departure"
           value={daysToTrip}
-          sub="Jul 16, 2026"
+          sub="Jul 17, 2026"
           icon={Plane}
           accent="#f59e0b"
           delay={0}
@@ -576,7 +697,7 @@ export default function TravelPage() {
               Day-by-Day Itinerary
             </h2>
             <span className="text-xs font-mono text-carbon-500">
-              {days.length} days, 10 nights
+              {days.length} days, 9 nights
             </span>
           </div>
 

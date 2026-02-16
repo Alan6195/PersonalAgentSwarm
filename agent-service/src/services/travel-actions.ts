@@ -65,6 +65,13 @@ export async function processTravelActions(
             replacement = '\n\n(Error: set_hotel requires region and hotel_name)';
             break;
           }
+          const metadata: Record<string, unknown> = {};
+          if (fields.image_url) metadata.image_url = fields.image_url;
+          if (fields.bed_type) metadata.bed_type = fields.bed_type;
+          if (fields.description) metadata.description = fields.description;
+          if (fields.honeymoon_package) metadata.honeymoon_package = fields.honeymoon_package;
+          if (fields.stars) metadata.stars = fields.stars;
+
           const item = await travelState.setItem(trip.id, region, 'hotel', hotelName, {
             status: fields.status || 'proposed',
             nightly_rate_eur: fields.nightly_rate_eur ? parseFloat(fields.nightly_rate_eur) : undefined,
@@ -72,6 +79,7 @@ export async function processTravelActions(
             cost_eur: fields.total_eur ? parseFloat(fields.total_eur) : undefined,
             booking_url: fields.booking_url || undefined,
             notes: fields.notes || undefined,
+            metadata,
           });
           replacement = `\n\nHotel set for ${region}: ${hotelName} [${item.status}]${item.cost_eur ? ` EUR ${item.cost_eur}` : ''}`;
           actions.push(`set_hotel: ${region} / ${hotelName}`);
@@ -105,6 +113,11 @@ export async function processTravelActions(
           }
           const totalEur = fields.total_eur ? parseFloat(fields.total_eur) : undefined;
           const costPp = fields.cost_per_person_eur ? parseFloat(fields.cost_per_person_eur) : undefined;
+          const actMeta: Record<string, unknown> = {};
+          if (fields.image_url) actMeta.image_url = fields.image_url;
+          if (fields.description) actMeta.description = fields.description;
+          if (fields.duration) actMeta.duration = fields.duration;
+
           const item = await travelState.setItem(trip.id, region, 'activity', name, {
             status: fields.status || 'proposed',
             cost_eur: totalEur,
@@ -113,6 +126,7 @@ export async function processTravelActions(
             day: fields.day || undefined,
             time: fields.time || undefined,
             notes: fields.notes || undefined,
+            metadata: Object.keys(actMeta).length > 0 ? actMeta : undefined,
           });
           replacement = `\n\nActivity added for ${region}: ${name} [${item.status}]`;
           actions.push(`add_activity: ${region} / ${name}`);

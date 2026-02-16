@@ -81,8 +81,8 @@ interface DayEntry {
 function buildDayByDay(items: any[]): DayEntry[] {
   // Define the trip structure
   const regions = [
-    { name: "porto", label: "Porto", start: "2026-07-16", end: "2026-07-19", nights: 3 },
-    { name: "lisbon", label: "Lisbon", start: "2026-07-19", end: "2026-07-22", nights: 3 },
+    { name: "porto", label: "Porto", start: "2026-07-17", end: "2026-07-20", nights: 3 },
+    { name: "lisbon", label: "Lisbon", start: "2026-07-20", end: "2026-07-22", nights: 2 },
     { name: "alentejo", label: "Alentejo", start: "2026-07-22", end: "2026-07-23", nights: 1 },
     { name: "algarve", label: "Algarve", start: "2026-07-23", end: "2026-07-26", nights: 3 },
   ];

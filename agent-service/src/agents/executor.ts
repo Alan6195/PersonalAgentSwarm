@@ -3,6 +3,7 @@ import { getPrompt, getModel } from './registry';
 import { callClaude } from '../services/claude';
 import * as taskManager from '../services/task-manager';
 import * as agentMemory from '../services/agent-memory';
+import * as xpSystem from '../services/xp-system';
 import * as outlookMail from '../services/outlook-mail';
 import * as gmailMail from '../services/gmail-mail';
 import * as webSearch from '../services/web-search';
@@ -42,6 +43,33 @@ export async function run(context: AgentContext): Promise<AgentResponse> {
       } catch (memErr) {
         console.warn(`[Executor] Memory recall failed for ${context.agentId}, continuing without:`, (memErr as Error).message);
       }
+    }
+
+    // Inject agent's XP rank and performance context so they know where they stand
+    try {
+      const leaderboard = await xpSystem.getLeaderboard();
+      const myEntry = leaderboard.find(e => e.id === context.agentId);
+      const myRank = leaderboard.findIndex(e => e.id === context.agentId) + 1;
+      const total = leaderboard.length;
+
+      if (myEntry && myRank > 0) {
+        const topAgent = leaderboard[0];
+        const isTop = myRank <= 2;
+        const isBottom = myRank >= Math.ceil(total * 0.75) && total > 3;
+
+        let motivation = '';
+        if (isTop) {
+          motivation = `You are one of the TOP performing agents in the swarm. Keep up the excellent work. Your high rank means Alan trusts your output, so deliver exceptional quality every time.`;
+        } else if (isBottom) {
+          motivation = `You are currently ranked low in the agent swarm. Step up your game. Be more thorough, proactive, and precise. If you feel limited by your capabilities, suggest improvements to Gilfoyle (the developer agent) that could make you more effective. Every task is a chance to earn XP and climb the ranks.`;
+        } else {
+          motivation = `You're in the middle of the pack. Solid work, but there's room to grow. Be more proactive and thorough to climb the leaderboard.`;
+        }
+
+        agentPrompt += `\n\n## YOUR AGENT RANK\nYou are *${myEntry.name}* (Lv.${myEntry.level} ${myEntry.level_title}), ranked #${myRank} of ${total} agents.\nXP: ${myEntry.xp} | Streak: ${myEntry.streak} | Tasks completed: ${myEntry.total_tasks}\nTop agent: ${topAgent.name} with ${topAgent.xp} XP.\n${motivation}`;
+      }
+    } catch (rankErr) {
+      // Non-critical, skip silently
     }
 
     // For life-admin, inject email context when the message is email-related
@@ -228,20 +256,46 @@ export async function run(context: AgentContext): Promise<AgentResponse> {
         console.warn(`[Executor] Travel state fetch failed, continuing without:`, (travelErr as Error).message);
       }
 
-      // Also inject web search if they're asking about specific hotels/restaurants/prices
+      // Always inject web search for travel-agent (it needs live pricing data)
       if (webSearch.isConfigured()) {
-        const searchKeywords = /\b(hotel|restaurant|price|cost|book|alternative|other option|search|find|look up)\b/i;
-        if (searchKeywords.test(context.userMessage)) {
-          try {
-            const results = await webSearch.searchWeb(`Portugal ${context.userMessage} 2026`, 5);
-            if (results.length > 0) {
-              const formatted = webSearch.formatResultsForAgent(results);
-              agentPrompt += `\n\n## WEB_SEARCH_RESULTS\nResults for your travel research query:\n\n${formatted}`;
-              console.log(`[Executor] Injected ${results.length} web search results for travel-agent`);
-            }
-          } catch (searchErr) {
-            console.warn('[Executor] Web search for travel failed:', (searchErr as Error).message);
+        try {
+          // Run multiple targeted searches for comprehensive results
+          const queries: string[] = [];
+          const msg = context.userMessage.toLowerCase();
+
+          // Always do a general search based on the message
+          queries.push(`Portugal honeymoon ${context.userMessage} 2026`);
+
+          // Add hotel-specific search if mentioned
+          if (/hotel|stay|room|accomm|where.*(sleep|stay)|lodging/i.test(msg)) {
+            queries.push(`Portugal boutique hotel rates July 2026 king bed honeymoon`);
           }
+          // Add transport search if mentioned
+          if (/transport|train|drive|car|bus|shuttle|get.*to|travel.*between|transfer/i.test(msg)) {
+            queries.push(`Portugal private transfer Porto Lisbon Algarve 2026 honeymoon couples`);
+          }
+          // Add restaurant search if mentioned
+          if (/restaurant|eat|food|dine|dinner|lunch|gluten.free|dairy.free/i.test(msg)) {
+            queries.push(`Portugal gluten free dairy free restaurant Porto Lisbon Algarve 2026`);
+          }
+
+          // Run up to 2 searches (first general, then most relevant specific)
+          const searchesToRun = queries.slice(0, 2);
+          const allResults: string[] = [];
+
+          for (const q of searchesToRun) {
+            const results = await webSearch.searchWeb(q, 5);
+            if (results.length > 0) {
+              allResults.push(webSearch.formatResultsForAgent(results));
+            }
+          }
+
+          if (allResults.length > 0) {
+            agentPrompt += `\n\n## WEB_SEARCH_RESULTS\nLive search results for your research (use these for pricing verification and recommendations):\n\n${allResults.join('\n\n---\n\n')}`;
+            console.log(`[Executor] Injected ${allResults.length} web search batches for travel-agent`);
+          }
+        } catch (searchErr) {
+          console.warn('[Executor] Web search for travel failed:', (searchErr as Error).message);
         }
       }
     }

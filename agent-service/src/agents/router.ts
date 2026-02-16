@@ -38,7 +38,7 @@ Available specialist agents:
 - research-analyst: Deep research, competitive intel, market analysis, web search, X/Twitter trend analysis. ALWAYS delegate when Alan says "analyze X", "X trends", "Twitter analysis", "research the X feed", "what's trending on X", or requests analysis of social media data/trends
 - comms-drafter: Email drafting, Slack messages, proposals, written communications
 - gilfoyle: Code changes, bug fixes, new features, file reading/editing, shell commands, codebase operations, git, npm, docker
-- travel-agent: Portugal honeymoon trip planning (July 16-26, 2026). Hotels, activities, restaurants, transport, booking. ALWAYS delegate when Alan mentions "honeymoon", "Portugal trip", "travel", "hotels in Portugal", "Porto", "Lisbon", "Algarve", "Faro", or anything about the honeymoon itinerary
+- travel-agent: Portugal honeymoon trip planning (July 17-26, 2026). Hotels, activities, restaurants, transport, booking. ALWAYS delegate when Alan mentions "honeymoon", "Portugal trip", "travel", "hotels in Portugal", "Porto", "Lisbon", "Algarve", "Faro", or anything about the honeymoon itinerary
 
 Respond with ONLY valid JSON (no markdown, no backticks):
 {
