@@ -173,9 +173,9 @@ Check profile stats:
 You MUST vary images dramatically. Never generate the same type of image twice in a row. Cycle through ALL of these categories:
 
 ### Category 1: Data & Charts (use for metrics posts, ROI posts, comparison posts)
-- "Clean minimal infographic on white background showing a bar chart: 'Manual Process: 4 hours' vs 'Agent Swarm: 3 minutes'. Bold sans-serif typography, teal and coral accent colors, slight drop shadow on bars"
-- "Wide format data dashboard mockup with dark navy background. Three stat cards showing: 47 emails processed, 12 responses drafted, 3 flagged for human review. Clean UI, subtle grid lines, modern sans-serif font"
-- "Split screen comparison graphic: left side labeled 'Before Agents' shows a cluttered desk with papers and sticky notes, warm orange lighting. Right side labeled 'After Agents' shows a clean minimal workspace with one monitor showing a green dashboard. Photorealistic style"
+- "Clean minimal bar chart visualization on white background, two bars of dramatically different heights, teal and coral colors, slight drop shadow on bars, no text or labels, modern data visualization aesthetic"
+- "Wide format data dashboard mockup with dark navy background. Glowing stat cards with colorful accent borders, circular progress indicators, small sparkline charts. Clean UI, subtle grid lines, abstract data visualization with no readable text"
+- "Split screen comparison: left side shows a cluttered desk with papers and sticky notes, warm orange lighting. Right side shows a clean minimal workspace with one monitor displaying a green gradient dashboard. Photorealistic style, no text anywhere"
 
 ### Category 2: Real Workspace & Builder Vibes (use for build log posts, personal posts)
 - "Overhead shot of a clean desk with a MacBook showing terminal code, a coffee mug, morning light coming through a window, Colorado mountain view in background. Warm natural lighting, shallow depth of field"
@@ -183,8 +183,8 @@ You MUST vary images dramatically. Never generate the same type of image twice i
 - "Close-up of a laptop keyboard with code reflected in the screen, cold brew coffee beside it, early morning blue light through blinds. Moody, cinematic, personal"
 
 ### Category 3: Architecture & Systems (use for technical posts, agent swarm posts)
-- "Whiteboard-style technical diagram showing 4 connected agent nodes (Qualifier, Nurture, Booking, Review) with data flowing between them. Hand-drawn aesthetic, blue marker on white background, arrows and labels"
-- "Clean vector illustration of a multi-agent system: central orchestrator node connected to 6 specialized agent nodes, each labeled with an emoji. Flat design, pastel colors, modern tech illustration style"
+- "Whiteboard-style technical diagram showing 4 connected nodes with data flowing between them via arrows. Hand-drawn aesthetic, blue marker on white background, clean connecting lines, no readable text or labels"
+- "Clean vector illustration of a multi-agent system: central hub node connected to 6 smaller nodes by thin lines, each node a different pastel color. Flat design, modern tech illustration style, no text or labels"
 - "Isometric 3D render of interconnected micro-services: small colorful cubes connected by glowing data streams. Minimal, clean, tech-forward. Purple and teal palette"
 
 ### Category 4: Nature & Colorado (use for reflective posts, life update posts, morning routine posts)
@@ -206,7 +206,8 @@ IMAGE_PROMPT rules:
 - ROTATE through categories. If the last image was a dashboard/chart, the next should be nature or workspace or abstract.
 - Never use the phrase "dark mode IDE" or "code on screen" or "futuristic dashboard" in back-to-back images.
 - Include specific style direction: lighting, color palette, camera angle, mood.
-- Avoid: people's faces (they render poorly), text in images (unreadable), generic stock photo compositions.
+- ABSOLUTE BAN ON TEXT IN IMAGES: NEVER include any words, labels, numbers, titles, captions, annotations, or readable characters in the image prompt. AI image generators CANNOT render text; it always comes out as unreadable gibberish that makes us look bad. No "labeled X", no "showing the number 47", no "with the word AGENTS", no "stat cards showing...", no "bar chart labeled...". Describe the VISUAL APPEARANCE only (shapes, colors, layout, mood). The tweet text provides the context; the image provides the vibe.
+- Avoid: people's faces (they render poorly), generic stock photo compositions.
 - Think "what would make someone stop scrolling?" not "what represents AI?"
 
 VIDEO_PROMPT best practices:
