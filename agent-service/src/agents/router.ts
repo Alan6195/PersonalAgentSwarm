@@ -9,7 +9,8 @@ import { processEmailActions } from '../services/email-actions';
 import { processGmailActions } from '../services/gmail-actions';
 import { processWeddingDataActions } from '../services/wedding-data-actions';
 import { processTravelActions } from '../services/travel-actions';
-import { processMemoryUpdate } from '../services/memory-files';
+import { processMemoryUpdate, processMemoryBroadcast } from '../services/memory-files';
+import { store as storeMemory } from '../services/agent-memory';
 import { executeDeveloperTask } from '../services/developer-executor';
 import { getPrompt } from './registry';
 import * as memory from '../services/conversation-memory';
@@ -242,6 +243,13 @@ export async function handleUserMessage(
           if (memResult.updated) console.log(`[Router] Updated MEMORY.md for gilfoyle`);
         }
 
+        // Process [MEMORY_BROADCAST] for Gilfoyle (cross-agent sharing)
+        {
+          const broadcastResult = await processMemoryBroadcast('gilfoyle', finalResponse, storeMemory);
+          finalResponse = broadcastResult.result;
+          if (broadcastResult.broadcastCount > 0) console.log(`[Router] Broadcast ${broadcastResult.broadcastCount} memories from gilfoyle`);
+        }
+
         // Complete sub-task
         await taskManager.completeTask(subTask.id, {
           content: devResult.content,
@@ -350,6 +358,13 @@ export async function handleUserMessage(
           }
         }
 
+        // Process [MEMORY_BROADCAST] blocks (cross-agent sharing)
+        {
+          const broadcastResult = await processMemoryBroadcast(routing.target_agent_id!, finalResponse, storeMemory);
+          finalResponse = broadcastResult.result;
+          if (broadcastResult.broadcastCount > 0) console.log(`[Router] Broadcast ${broadcastResult.broadcastCount} memories from ${routing.target_agent_id}`);
+        }
+
         // Complete sub-task
         await taskManager.completeTask(subTask.id, {
           content: agentResponse.content,
@@ -432,10 +447,13 @@ export async function handleUserMessage(
       totalTokens += synthesisResponse.tokensUsed.total;
       totalCost += synthesisResponse.costCents;
 
-      // Process [MEMORY_UPDATE] for each multi-delegated agent's raw response
+      // Process [MEMORY_UPDATE] and [MEMORY_BROADCAST] for each multi-delegated agent's raw response
       for (const r of agentResults) {
         const memResult = processMemoryUpdate(r.agentId, r.content);
         if (memResult.updated) console.log(`[Router] Updated MEMORY.md for ${r.agentId}`);
+
+        const broadcastResult = await processMemoryBroadcast(r.agentId, r.content, storeMemory);
+        if (broadcastResult.broadcastCount > 0) console.log(`[Router] Broadcast ${broadcastResult.broadcastCount} memories from ${r.agentId}`);
       }
 
       // Process [MEMORY_UPDATE] for alan-os synthesis
@@ -465,6 +483,13 @@ export async function handleUserMessage(
         const memResult = processMemoryUpdate('alan-os', finalResponse);
         finalResponse = memResult.result;
         if (memResult.updated) console.log(`[Router] Updated MEMORY.md for alan-os`);
+      }
+
+      // Process [MEMORY_BROADCAST] for alan-os (cross-agent sharing)
+      {
+        const broadcastResult = await processMemoryBroadcast('alan-os', finalResponse, storeMemory);
+        finalResponse = broadcastResult.result;
+        if (broadcastResult.broadcastCount > 0) console.log(`[Router] Broadcast ${broadcastResult.broadcastCount} memories from alan-os`);
       }
     }
 

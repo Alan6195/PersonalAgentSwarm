@@ -199,4 +199,72 @@ export function getMemoryPath(agentId: string): string {
   return path.join(MEMORY_DIR, `${agentId}.md`);
 }
 
+// ---------------------------------------------------------------
+// Parse [MEMORY_BROADCAST] blocks from agent responses
+// ---------------------------------------------------------------
+
+const MEMORY_BROADCAST_REGEX = /\[MEMORY_BROADCAST\]([\s\S]*?)\[\/MEMORY_BROADCAST\]/g;
+
+/**
+ * Extract [MEMORY_BROADCAST] blocks from an agent's response.
+ * Returns an array of broadcast content strings (there may be multiple).
+ * Returns empty array if no blocks found.
+ */
+export function extractMemoryBroadcast(response: string): string[] {
+  const broadcasts: string[] = [];
+  let match: RegExpExecArray | null;
+
+  MEMORY_BROADCAST_REGEX.lastIndex = 0;
+
+  while ((match = MEMORY_BROADCAST_REGEX.exec(response)) !== null) {
+    const content = match[1].trim();
+    if (content) broadcasts.push(content);
+  }
+
+  return broadcasts;
+}
+
+/**
+ * Process [MEMORY_BROADCAST] blocks: extract, store to agent_memory with
+ * visibility='broadcast', strip from response.
+ *
+ * Must be called with the agent-memory store function to persist.
+ */
+export async function processMemoryBroadcast(
+  sourceAgentId: string,
+  response: string,
+  storeFn: (params: { agentId: string; category: string; content: string; keywords: string[]; importance?: 'low' | 'medium' | 'high' | 'critical' }) => Promise<number>
+): Promise<{ result: string; broadcastCount: number }> {
+  const broadcasts = extractMemoryBroadcast(response);
+
+  if (broadcasts.length === 0) {
+    return { result: response, broadcastCount: 0 };
+  }
+
+  for (const content of broadcasts) {
+    // Extract keywords from broadcast content for searchability
+    const words = content
+      .toLowerCase()
+      .replace(/[^a-z0-9\s'-]/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length > 2);
+    const keywords = [...new Set(words)].slice(0, 20);
+
+    await storeFn({
+      agentId: sourceAgentId,
+      category: 'broadcast',
+      content,
+      keywords,
+      importance: 'high',
+    });
+  }
+
+  console.log(`[MemoryFiles] Processed ${broadcasts.length} MEMORY_BROADCAST block(s) from ${sourceAgentId}`);
+
+  // Strip blocks from response
+  const cleaned = response.replace(MEMORY_BROADCAST_REGEX, '').trim();
+
+  return { result: cleaned, broadcastCount: broadcasts.length };
+}
+
 export { SOULS_DIR, MEMORY_DIR };

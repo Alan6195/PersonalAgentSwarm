@@ -2,6 +2,7 @@ import * as http from 'http';
 import { config } from '../config';
 import * as taskManager from './task-manager';
 import * as activityLogger from './activity-logger';
+import { getMemoryHealth } from './memory-health';
 
 interface ContactPayload {
   name: string;
@@ -47,7 +48,7 @@ function jsonResponse(
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, X-Webhook-Secret',
   });
   res.end(JSON.stringify(body));
@@ -190,6 +191,17 @@ export function startWebhookServer(): http.Server {
     // Health check
     if (req.method === 'GET' && req.url === '/health') {
       jsonResponse(res, 200, { status: 'ok' });
+      return;
+    }
+
+    // Memory health dashboard
+    if (req.method === 'GET' && req.url === '/memory/health') {
+      try {
+        const report = await getMemoryHealth();
+        jsonResponse(res, 200, report as unknown as Record<string, unknown>);
+      } catch (err) {
+        jsonResponse(res, 500, { error: 'Failed to generate memory health report', details: (err as Error).message });
+      }
       return;
     }
 

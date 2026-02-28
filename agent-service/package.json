@@ -12,6 +12,7 @@
     "@anthropic-ai/sdk": "^0.39.0",
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "node-telegram-bot-api": "^0.66.0",
+    "openai": "^4.104.0",
     "pdfkit": "^0.15.2",
     "pg": "^8.13.0",
     "twitter-api-v2": "^1.18.0",

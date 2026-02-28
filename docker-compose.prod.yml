@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
       POSTGRES_DB: mission_control
@@ -53,6 +53,7 @@ services:
       DEV_AGENT_SHIP_MAX_TURNS: ${DEV_AGENT_SHIP_MAX_TURNS:-100}
       DEV_AGENT_SHIP_MAX_BUDGET_USD: ${DEV_AGENT_SHIP_MAX_BUDGET_USD:-25.00}
       SERPAPI_KEY: ${SERPAPI_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GOOGLE_CALENDAR_CLIENT_ID: ${GOOGLE_CALENDAR_CLIENT_ID:-}
       GOOGLE_CALENDAR_CLIENT_SECRET: ${GOOGLE_CALENDAR_CLIENT_SECRET:-}
       GOOGLE_CALENDAR_REFRESH_TOKEN: ${GOOGLE_CALENDAR_REFRESH_TOKEN:-}

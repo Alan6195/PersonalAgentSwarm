@@ -41,6 +41,11 @@ export const config = {
   DEV_AGENT_SHIP_MAX_TURNS: parseInt(process.env.DEV_AGENT_SHIP_MAX_TURNS || '100', 10),
   DEV_AGENT_SHIP_MAX_BUDGET_USD: parseFloat(process.env.DEV_AGENT_SHIP_MAX_BUDGET_USD || '25.00'),
 
+  // OpenAI (embeddings for memory system)
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+  EMBEDDING_MODEL: 'text-embedding-3-small',
+  EMBEDDING_DIMS: 1536,
+
   // SerpAPI (Google Search, Hotels, Flights, Maps)
   SERPAPI_KEY: process.env.SERPAPI_KEY || '',
 
@@ -113,6 +118,12 @@ export function validateConfig(): void {
 
   console.log(`[Config] Developer agent: cwd=${config.DEV_AGENT_CWD}, maxTurns=${config.DEV_AGENT_MAX_TURNS}, maxBudget=$${config.DEV_AGENT_MAX_BUDGET_USD}`);
   console.log(`[Config] Ship mode: maxTurns=${config.DEV_AGENT_SHIP_MAX_TURNS}, maxBudget=$${config.DEV_AGENT_SHIP_MAX_BUDGET_USD}`);
+
+  if (config.OPENAI_API_KEY) {
+    console.log('[Config] OpenAI API key found; semantic memory embeddings enabled.');
+  } else {
+    console.log('[Config] OPENAI_API_KEY not set; memory system will use keyword-only recall.');
+  }
 
   if (config.SERPAPI_KEY) {
     console.log('[Config] SerpAPI configured; web search, hotels, flights, maps enabled.');

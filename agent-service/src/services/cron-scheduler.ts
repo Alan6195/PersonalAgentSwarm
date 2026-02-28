@@ -21,6 +21,7 @@ import { buildProactiveContext } from './proactive-sweep';
 import { executeDeveloperTask } from './developer-executor';
 import { getPrompt } from '../agents/registry';
 import { checkBudget } from './cost-guardrails';
+import { runDailyMaintenance } from './memory-decay';
 
 interface CronJob {
   id: number;
@@ -280,6 +281,31 @@ async function runJob(job: CronJob): Promise<void> {
       }
 
       console.log(`[Cron] Gilfoyle Night Shift completed: dev_queue #${devItem.id} (${devResult.numTurns} turns, $${devResult.totalCostUsd.toFixed(2)})`);
+      return;
+    }
+
+    // Memory Maintenance: system job, no LLM needed
+    const isMemoryMaintenance = job.name === 'Memory Maintenance';
+    if (isMemoryMaintenance) {
+      console.log('[Cron] Running Memory Maintenance (system job, no LLM)');
+      const decayResult = await runDailyMaintenance();
+      const durationMs = Date.now() - startTime;
+      const summary = `Archived: ${decayResult.archived}, Decayed: ${decayResult.decayed}, Consolidated: ${decayResult.consolidated}${decayResult.errors.length > 0 ? `, Errors: ${decayResult.errors.length}` : ''}`;
+
+      await query(`UPDATE cron_runs SET status = 'success', duration_ms = $1, output_summary = $2, completed_at = NOW() WHERE id = $3`, [durationMs, summary, run.id]);
+      const nextRun = calculateNextRun(job.schedule);
+      await query(`UPDATE cron_jobs SET last_status = 'success', last_run_at = NOW(), next_run_at = $1, last_duration_ms = $2, run_count = run_count + 1, updated_at = NOW() WHERE id = $3`, [nextRun, durationMs, job.id]);
+      await taskManager.completeTask(task.id, { content: summary, tokensUsed: 0, costCents: 0, durationMs });
+
+      await activityLogger.log({
+        event_type: 'cron_completed',
+        agent_id: job.agent_id,
+        task_id: task.id,
+        channel: 'cron',
+        summary: `Memory Maintenance: ${summary}`,
+      });
+
+      console.log(`[Cron] Memory Maintenance completed (${durationMs}ms): ${summary}`);
       return;
     }
 
