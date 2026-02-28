@@ -47,12 +47,45 @@ export function setCronNotifier(notifier: (text: string) => Promise<void>): void
 /**
  * Start the cron scheduler loop. Checks every 60 seconds.
  */
-export function startScheduler(): void {
+export async function startScheduler(): Promise<void> {
   console.log('[Cron] Scheduler started, checking every 60s');
+
+  // Bootstrap: ensure all enabled jobs have a valid next_run_at.
+  // Jobs inserted without next_run_at will never be picked up by the
+  // scheduler query (which requires next_run_at IS NOT NULL).
+  await initializeNextRunAt();
 
   // Run immediately on start, then every 60s
   checkAndRunJobs();
   schedulerInterval = setInterval(checkAndRunJobs, 60_000);
+}
+
+/**
+ * For any enabled job with a NULL next_run_at, compute and set it.
+ * This prevents the chicken-and-egg problem where a job can never
+ * fire because next_run_at is only set after the first run.
+ */
+async function initializeNextRunAt(): Promise<void> {
+  try {
+    const uninitialized = await query<CronJob>(
+      `SELECT * FROM cron_jobs WHERE enabled = true AND next_run_at IS NULL`
+    );
+
+    if (uninitialized.length === 0) return;
+
+    console.log(`[Cron] Bootstrapping next_run_at for ${uninitialized.length} job(s)`);
+
+    for (const job of uninitialized) {
+      const nextRun = calculateNextRun(job.schedule);
+      await query(
+        `UPDATE cron_jobs SET next_run_at = $1, updated_at = NOW() WHERE id = $2`,
+        [nextRun, job.id]
+      );
+      console.log(`[Cron]   -> ${job.name}: next_run_at = ${nextRun.toISOString()}`);
+    }
+  } catch (err) {
+    console.error('[Cron] Failed to initialize next_run_at:', (err as Error).message);
+  }
 }
 
 /**

@@ -69,7 +69,7 @@ async function main(): Promise<void> {
   setBudgetAlertNotifier(telegramNotifier);
 
   // 8. Start cron scheduler
-  startScheduler();
+  await startScheduler();
 
   // 9. Graceful shutdown
   const shutdown = async (): Promise<void> => {
