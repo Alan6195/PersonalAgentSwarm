@@ -75,6 +75,7 @@ async function checkAndRunJobs(): Promise<void> {
        WHERE enabled = true
          AND next_run_at IS NOT NULL
          AND next_run_at <= NOW()
+         AND last_status != 'running'
        ORDER BY next_run_at ASC`
     );
 
@@ -95,10 +96,13 @@ async function checkAndRunJobs(): Promise<void> {
 async function runJob(job: CronJob): Promise<void> {
   console.log(`[Cron] Running job: ${job.name} (agent: ${job.agent_id})`);
 
-  // Mark job as running
+  // Mark job as running AND advance next_run_at immediately to prevent
+  // the scheduler from picking up the same job on the next 60s tick
+  // (jobs can take 5+ minutes; without this, duplicates fire every tick)
+  const earlyNextRun = calculateNextRun(job.schedule);
   await query(
-    `UPDATE cron_jobs SET last_status = 'running', updated_at = NOW() WHERE id = $1`,
-    [job.id]
+    `UPDATE cron_jobs SET last_status = 'running', next_run_at = $1, updated_at = NOW() WHERE id = $2`,
+    [earlyNextRun, job.id]
   );
 
   // Create a cron_runs entry
