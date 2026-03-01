@@ -3,6 +3,8 @@ import { config } from '../config';
 import * as taskManager from './task-manager';
 import * as activityLogger from './activity-logger';
 import { getMemoryHealth } from './memory-health';
+import { handleUserMessage } from '../agents/router';
+import { query } from '../db';
 
 interface ContactPayload {
   name: string;
@@ -11,6 +13,20 @@ interface ContactPayload {
   message?: string;
   source?: string;
 }
+
+interface DashboardPayload {
+  message: string;
+  item_context?: {
+    id: number;
+    name: string;
+    region: string;
+    item_type: string;
+  };
+  notification?: boolean;
+}
+
+// Fixed chatId for dashboard conversations (separate from Telegram)
+const DASHBOARD_CHAT_ID = -999;
 
 type TelegramNotifier = (text: string) => Promise<void>;
 
@@ -178,6 +194,119 @@ async function handleContactWebhook(
   }
 }
 
+async function handleDashboardWebhook(
+  req: http.IncomingMessage,
+  res: http.ServerResponse
+): Promise<void> {
+  // Verify webhook secret
+  const secret = req.headers['x-webhook-secret'];
+  if (secret !== config.WEBHOOK_SECRET) {
+    console.log('[Webhook] Dashboard rejected: invalid secret');
+    jsonResponse(res, 401, { success: false, error: 'Invalid webhook secret' });
+    return;
+  }
+
+  // Parse body
+  let body: string;
+  try {
+    body = await parseBody(req);
+  } catch {
+    jsonResponse(res, 400, { success: false, error: 'Invalid request body' });
+    return;
+  }
+
+  let data: DashboardPayload;
+  try {
+    data = JSON.parse(body) as DashboardPayload;
+  } catch {
+    jsonResponse(res, 400, { success: false, error: 'Invalid JSON' });
+    return;
+  }
+
+  if (!data.message || typeof data.message !== 'string') {
+    jsonResponse(res, 400, { success: false, error: 'message field is required' });
+    return;
+  }
+
+  const message = data.message.trim();
+  console.log(`[Webhook] Dashboard message: "${message.substring(0, 80)}"`);
+
+  // If this is just a notification (approve/veto echo), send to Telegram and return
+  if (data.notification) {
+    try {
+      if (sendTelegramNotification) {
+        await sendTelegramNotification(message);
+      }
+      jsonResponse(res, 200, { success: true });
+    } catch (err) {
+      console.error('[Webhook] Telegram notification error:', (err as Error).message);
+      jsonResponse(res, 200, { success: true }); // Don't fail on notification errors
+    }
+    return;
+  }
+
+  // Build the agent message; if item_context provided, compose a richer prompt
+  let agentMessage = message;
+  if (data.item_context) {
+    const ctx = data.item_context;
+    agentMessage = `${message}\n\n[Context: This is about "${ctx.name}" (${ctx.item_type}) in ${ctx.region}, item ID ${ctx.id}]`;
+  }
+
+  try {
+    // Get trip ID for storing messages
+    const tripRows = await query(
+      `SELECT id FROM travel_trips WHERE trip_id = 'portugal-honeymoon-2026' LIMIT 1`
+    );
+    const tripDbId = tripRows.length > 0 ? tripRows[0].id : null;
+
+    // Store user message
+    if (tripDbId) {
+      await query(
+        `INSERT INTO dashboard_messages (trip_db_id, direction, content, item_id, action_type)
+         VALUES ($1, 'user', $2, $3, $4)`,
+        [tripDbId, message, data.item_context?.id || null, 'chat']
+      );
+    }
+
+    // Route through the full agent pipeline
+    const response = await handleUserMessage(agentMessage, 0, DASHBOARD_CHAT_ID);
+
+    // Store agent response
+    let messageId: number | null = null;
+    if (tripDbId) {
+      const inserted = await query(
+        `INSERT INTO dashboard_messages (trip_db_id, direction, content, action_type)
+         VALUES ($1, 'agent', $2, 'chat') RETURNING id`,
+        [tripDbId, response]
+      );
+      messageId = inserted.length > 0 ? inserted[0].id : null;
+    }
+
+    // Echo to Telegram
+    if (sendTelegramNotification) {
+      try {
+        const telegramMsg = `\u{1F4BB} *Dashboard*\n_${message.substring(0, 100)}_\n\n${response}`;
+        await sendTelegramNotification(telegramMsg);
+      } catch (err) {
+        console.error('[Webhook] Telegram echo error:', (err as Error).message);
+      }
+    }
+
+    jsonResponse(res, 200, {
+      success: true,
+      response,
+      message_id: messageId,
+    });
+  } catch (err) {
+    console.error('[Webhook] Dashboard message error:', (err as Error).message);
+    jsonResponse(res, 500, {
+      success: false,
+      error: 'Failed to process message',
+      details: (err as Error).message,
+    });
+  }
+}
+
 export function startWebhookServer(): http.Server {
   const port = config.WEBHOOK_PORT;
 
@@ -208,6 +337,12 @@ export function startWebhookServer(): http.Server {
     // Contact form webhook
     if (req.method === 'POST' && req.url === '/api/webhooks/contact') {
       await handleContactWebhook(req, res);
+      return;
+    }
+
+    // Dashboard message webhook
+    if (req.method === 'POST' && req.url === '/api/webhooks/dashboard') {
+      await handleDashboardWebhook(req, res);
       return;
     }
 

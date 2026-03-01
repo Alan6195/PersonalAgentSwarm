@@ -301,19 +301,33 @@ export async function run(context: AgentContext): Promise<AgentResponse> {
         }
 
         // Flight search: use Google Flights API
-        if (/flight|fly|airline|airport|plane|DEN|OPO|LIS/i.test(msg)) {
+        if (/flight|fly|airline|airport|plane|PDX|OPO|LIS|FAO|points|miles|chase/i.test(msg)) {
           try {
+            // Detect if asking about return flight
+            let departureId = 'PDX';
             let arrivalId = 'OPO'; // default Porto
-            if (/lisbon|lisboa|LIS/i.test(msg)) arrivalId = 'LIS';
+            let outDate = '2026-07-17';
+            let retDate = '2026-07-26';
 
-            const flights = await webSearch.searchFlights({
-              departureId: 'DEN',
+            if (/return|faro|FAO|coming back|fly home|fly back/i.test(msg)) {
+              departureId = 'FAO';
+              arrivalId = 'PDX';
+              outDate = '2026-07-26';
+              retDate = '';
+            } else if (/lisbon|lisboa|LIS/i.test(msg)) {
+              arrivalId = 'LIS';
+            }
+
+            const searchParams: Record<string, string> = {
+              departureId,
               arrivalId,
-              outboundDate: '2026-07-17',
-              returnDate: '2026-07-26',
-            });
+              outboundDate: outDate,
+            };
+            if (retDate) searchParams.returnDate = retDate;
+
+            const flights = await webSearch.searchFlights(searchParams as any);
             if (flights.length > 0) {
-              searchSections.push(`## GOOGLE_FLIGHTS_RESULTS\nLive flight pricing DEN -> ${arrivalId} (Jul 17-26, 2026):\n\n${webSearch.formatFlightsForAgent(flights)}`);
+              searchSections.push(`## GOOGLE_FLIGHTS_RESULTS\nLive flight pricing ${departureId} -> ${arrivalId} (${outDate}):\n\n${webSearch.formatFlightsForAgent(flights)}`);
               console.log(`[Executor] Injected ${flights.length} flight results for travel-agent`);
             }
           } catch (err) {
@@ -325,12 +339,19 @@ export async function run(context: AgentContext): Promise<AgentResponse> {
         if (/restaurant|eat|food|dine|dinner|lunch|gluten.free|dairy.free|things to do|activit|museum|tour|wine|vineyard/i.test(msg)) {
           try {
             let localQuery = 'best restaurants Portugal';
+            let isActivity = false;
             if (/porto/i.test(msg)) localQuery = 'best restaurants Porto Portugal';
             else if (/lisbon|lisboa/i.test(msg)) localQuery = 'best restaurants Lisbon Portugal';
             else if (/algarve/i.test(msg)) localQuery = 'best restaurants Algarve Portugal';
-            if (/gluten.free|dairy.free|allergy/i.test(msg)) localQuery += ' allergy friendly';
+            else if (/douro/i.test(msg)) localQuery = 'best restaurants Douro Valley Portugal';
+            else if (/comporta/i.test(msg)) localQuery = 'best restaurants Comporta Portugal';
+            // Always include GF/DF for restaurant searches (Carissa's dietary needs)
+            if (/restaurant|eat|food|dine|dinner|lunch/i.test(msg)) {
+              localQuery += ' gluten free celiac friendly';
+            }
             if (/activit|things to do|museum|tour/i.test(msg)) {
               localQuery = localQuery.replace('restaurants', 'things to do');
+              isActivity = true;
             }
 
             const places = await webSearch.searchLocal({ query: localQuery });

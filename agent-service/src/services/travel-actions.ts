@@ -74,11 +74,12 @@ export async function processTravelActions(
 
           const item = await travelState.setItem(trip.id, region, 'hotel', hotelName, {
             status: fields.status || 'proposed',
-            nightly_rate_eur: fields.nightly_rate_eur ? parseFloat(fields.nightly_rate_eur) : undefined,
+            nightly_rate_eur: fields.nightly_rate_eur ? parseFloat(fields.nightly_rate_eur) : (fields.price_per_night ? parseFloat(fields.price_per_night) : undefined),
             nights: fields.nights ? parseInt(fields.nights) : undefined,
-            cost_eur: fields.total_eur ? parseFloat(fields.total_eur) : undefined,
+            cost_eur: fields.total_eur ? parseFloat(fields.total_eur) : (fields.total ? parseFloat(fields.total) : undefined),
             booking_url: fields.booking_url || undefined,
             notes: fields.notes || undefined,
+            gf_df_rating: fields.gf_df_rating || undefined,
             metadata,
           });
           replacement = `\n\nHotel set for ${region}: ${hotelName} [${item.status}]${item.cost_eur ? ` EUR ${item.cost_eur}` : ''}`;
@@ -92,15 +93,32 @@ export async function processTravelActions(
             replacement = '\n\n(Error: update_hotel requires region)';
             break;
           }
-          await travelState.updateItemStatus(
-            trip.id,
-            region,
-            'hotel',
-            fields.status || 'approved',
-            { confirmation_number: fields.confirmation_number }
-          );
-          replacement = `\n\nHotel in ${region} updated to: ${fields.status}${fields.confirmation_number ? ` (conf: ${fields.confirmation_number})` : ''}`;
-          actions.push(`update_hotel: ${region} -> ${fields.status}`);
+          // Only update status if explicitly provided; never auto-approve
+          const newStatus = fields.status;
+          if (newStatus) {
+            await travelState.updateItemStatus(
+              trip.id,
+              region,
+              'hotel',
+              newStatus,
+              { confirmation_number: fields.confirmation_number }
+            );
+            replacement = `\n\nHotel in ${region} updated to: ${newStatus}${fields.confirmation_number ? ` (conf: ${fields.confirmation_number})` : ''}`;
+            actions.push(`update_hotel: ${region} -> ${newStatus}`);
+          } else if (fields.confirmation_number) {
+            // Just update confirmation number without changing status
+            await travelState.updateItemStatus(
+              trip.id,
+              region,
+              'hotel',
+              'booked',
+              { confirmation_number: fields.confirmation_number }
+            );
+            replacement = `\n\nHotel in ${region} booked (conf: ${fields.confirmation_number})`;
+            actions.push(`update_hotel: ${region} -> booked`);
+          } else {
+            replacement = '\n\n(Error: update_hotel requires status or confirmation_number)';
+          }
           break;
         }
 
@@ -122,6 +140,7 @@ export async function processTravelActions(
             status: fields.status || 'proposed',
             cost_eur: totalEur,
             cost_per_person_eur: costPp,
+            price_per_person: fields.price_estimate_pp ? parseFloat(fields.price_estimate_pp) : costPp,
             booking_url: fields.booking_url || undefined,
             day: fields.day || undefined,
             time: fields.time || undefined,
@@ -140,18 +159,27 @@ export async function processTravelActions(
             replacement = '\n\n(Error: add_restaurant requires region and name)';
             break;
           }
-          const metadata: Record<string, unknown> = {};
-          if (fields.price_range_eur) metadata.price_range_eur = fields.price_range_eur;
-          if (fields.gf_df_friendly) metadata.gf_df_friendly = fields.gf_df_friendly === 'true';
-          if (fields.reservation_needed) metadata.reservation_needed = fields.reservation_needed === 'true';
-          if (fields.reservation_advance) metadata.reservation_advance = fields.reservation_advance;
+          const restMeta: Record<string, unknown> = {};
+          if (fields.price_range_eur) restMeta.price_range_eur = fields.price_range_eur;
+          if (fields.gf_df_friendly) restMeta.gf_df_friendly = fields.gf_df_friendly === 'true';
+          if (fields.reservation_needed) restMeta.reservation_needed = fields.reservation_needed === 'true' || fields.reservation_needed === 'yes';
+          if (fields.reservation_advance) restMeta.reservation_advance = fields.reservation_advance;
+          if (fields.address) restMeta.address = fields.address;
+
+          const pricePp = fields.price_estimate_pp ? parseFloat(fields.price_estimate_pp) : undefined;
 
           const item = await travelState.setItem(trip.id, region, 'restaurant', name, {
             status: 'proposed',
+            day: fields.day || undefined,
+            time: fields.meal || fields.time || undefined,
             notes: fields.notes || undefined,
-            metadata,
+            booking_url: fields.booking_url || undefined,
+            gf_df_rating: fields.gf_df_rating || undefined,
+            price_per_person: pricePp,
+            metadata: restMeta,
           });
-          replacement = `\n\nRestaurant added for ${region}: ${name}`;
+          const gfLabel = item.gf_df_rating ? ` [GF/DF: ${item.gf_df_rating}]` : '';
+          replacement = `\n\nRestaurant added for ${region}: ${name}${gfLabel}`;
           actions.push(`add_restaurant: ${region} / ${name}`);
           break;
         }
@@ -214,6 +242,8 @@ export async function processTravelActions(
             activities_total_eur: fields.activities_total_eur ? parseFloat(fields.activities_total_eur) : trip.budget.activities_total_eur,
             transport_total_eur: fields.transport_total_eur ? parseFloat(fields.transport_total_eur) : trip.budget.transport_total_eur,
             food_estimate_eur: fields.food_estimate_eur ? parseFloat(fields.food_estimate_eur) : trip.budget.food_estimate_eur,
+            flights_total_usd: fields.flights_total_usd ? parseFloat(fields.flights_total_usd) : (trip.budget.flights_total_usd || 0),
+            flights_total_points: fields.flights_total_points ? parseInt(fields.flights_total_points) : (trip.budget.flights_total_points || 0),
             grand_total_eur: fields.grand_total_eur ? parseFloat(fields.grand_total_eur) : 0,
           };
           // Auto-calculate grand total if not provided
@@ -226,6 +256,63 @@ export async function processTravelActions(
           break;
         }
 
+        case 'track_flight': {
+          const direction = fields.direction;
+          if (!direction) {
+            replacement = '\n\n(Error: track_flight requires direction)';
+            break;
+          }
+          const flight = await travelState.setFlight(trip.id, direction, {
+            route: fields.route || undefined,
+            departure_airport: fields.departure_airport || (direction === 'outbound' ? 'PDX' : 'FAO'),
+            arrival_airport: fields.arrival_airport || (direction === 'outbound' ? 'OPO' : 'PDX'),
+            departure_date: fields.date || fields.departure_date || undefined,
+            airline: fields.airline || undefined,
+            cabin_class: fields.cabin_class || 'economy',
+            price_usd: fields.cash_price_pp ? parseFloat(fields.cash_price_pp) : (fields.price_usd ? parseFloat(fields.price_usd) : undefined),
+            points_cost: fields.points_needed ? parseInt(fields.points_needed) : (fields.points_cost ? parseInt(fields.points_cost) : undefined),
+            points_program: fields.points_option || fields.points_program || undefined,
+            cpp_value: fields.cpp_value ? parseFloat(fields.cpp_value) : undefined,
+            notes: fields.notes || undefined,
+          });
+          // Log price check
+          if (flight.id && (fields.cash_price_pp || fields.price_usd || fields.points_needed || fields.points_cost)) {
+            await travelState.addFlightPriceCheck(
+              flight.id,
+              fields.cash_price_pp ? parseFloat(fields.cash_price_pp) : (fields.price_usd ? parseFloat(fields.price_usd) : null),
+              fields.points_needed ? parseInt(fields.points_needed) : (fields.points_cost ? parseInt(fields.points_cost) : null),
+              'agent_search'
+            );
+          }
+          const depAirport = fields.departure_airport || (direction === 'outbound' ? 'PDX' : 'FAO');
+          const arrAirport = fields.arrival_airport || (direction === 'outbound' ? 'OPO' : 'PDX');
+          replacement = `\n\nFlight tracked: ${direction} ${depAirport} -> ${arrAirport}${fields.airline ? ` (${fields.airline})` : ''}${fields.cash_price_pp ? ` $${fields.cash_price_pp}/pp` : ''}`;
+          actions.push(`track_flight: ${direction}`);
+          break;
+        }
+
+        case 'book_flight': {
+          const direction = fields.direction;
+          if (!direction) {
+            replacement = '\n\n(Error: book_flight requires direction)';
+            break;
+          }
+          const flights = await travelState.getFlights(trip.id);
+          const target = flights.find(f => f.direction === direction);
+          if (!target) {
+            replacement = `\n\n(Error: no tracked flight found for direction: ${direction}. Use track_flight first.)`;
+            break;
+          }
+          await travelState.updateFlightStatus(target.id, 'booked', {
+            confirmation_number: fields.confirmation_number || undefined,
+            booked_via: fields.strategy || fields.booked_via || undefined,
+            booking_url: fields.booking_url || undefined,
+          });
+          replacement = `\n\nFlight booked: ${direction} (conf: ${fields.confirmation_number || 'pending'})`;
+          actions.push(`book_flight: ${direction}`);
+          break;
+        }
+
         case 'get_state': {
           const context = await travelState.buildTravelContext(trip.trip_id);
           replacement = `\n\n${context}`;
@@ -235,6 +322,15 @@ export async function processTravelActions(
 
         default:
           replacement = `\n\n(Unknown travel action: ${action})`;
+      }
+      // Auto-recalculate budget after cost-impacting actions
+      const costActions = ['set_hotel', 'add_activity', 'add_restaurant', 'set_transport', 'track_flight', 'book_flight'];
+      if (costActions.includes(action)) {
+        try {
+          await travelState.recalculateBudget(trip.id);
+        } catch (budgetErr) {
+          console.error(`[TravelActions] Budget recalculation failed:`, (budgetErr as Error).message);
+        }
       }
     } catch (err) {
       replacement = `\n\n(Travel action "${action}" failed: ${(err as Error).message})`;

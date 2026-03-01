@@ -84,19 +84,21 @@ export async function handleUserMessage(
   chatId?: number
 ): Promise<string> {
   const effectiveChatId = chatId ?? telegramMessageId;
+  const isDashboard = effectiveChatId === -999;
+  const channelName = isDashboard ? 'dashboard' : 'telegram';
 
   // 0. Record user message in conversation memory
   memory.addUserMessage(effectiveChatId, userMessage);
 
   // 1. Create parent task
   const task = await taskManager.createTask({
-    title: `Telegram: ${userMessage.substring(0, 80)}`,
+    title: `${isDashboard ? 'Dashboard' : 'Telegram'}: ${userMessage.substring(0, 80)}`,
     description: userMessage,
     status: 'in_progress',
     priority: 'normal',
     assigned_agent: 'alan-os',
     input_summary: userMessage,
-    metadata: { telegram_message_id: telegramMessageId, channel: 'telegram' },
+    metadata: { telegram_message_id: telegramMessageId, channel: channelName },
   });
 
   // 2. Log message received
@@ -104,7 +106,7 @@ export async function handleUserMessage(
     event_type: 'message_received',
     agent_id: 'alan-os',
     task_id: task.id,
-    channel: 'telegram',
+    channel: channelName,
     summary: `Received: "${userMessage.substring(0, 100)}"`,
   });
 
