@@ -142,7 +142,7 @@ export async function processTravelActions(
             cost_per_person_eur: costPp,
             price_per_person: fields.price_estimate_pp ? parseFloat(fields.price_estimate_pp) : costPp,
             booking_url: fields.booking_url || undefined,
-            day: fields.day || undefined,
+            day: normalizeDay(fields.day),
             time: fields.time || undefined,
             notes: fields.notes || undefined,
             metadata: Object.keys(actMeta).length > 0 ? actMeta : undefined,
@@ -170,7 +170,7 @@ export async function processTravelActions(
 
           const item = await travelState.setItem(trip.id, region, 'restaurant', name, {
             status: 'proposed',
-            day: fields.day || undefined,
+            day: normalizeDay(fields.day),
             time: fields.meal || fields.time || undefined,
             notes: fields.notes || undefined,
             booking_url: fields.booking_url || undefined,
@@ -346,6 +346,43 @@ export async function processTravelActions(
     result: modifiedResponse.trim(),
     originalResponse: agentResponse,
   };
+}
+
+/**
+ * Normalize a day value to a full ISO date (YYYY-MM-DD).
+ * The agent sometimes outputs just a day number (e.g., "17") or
+ * a partial date (e.g., "July 17") instead of "2026-07-17".
+ * This normalizes all variations to the trip's date range.
+ */
+function normalizeDay(dayValue: string | undefined): string | undefined {
+  if (!dayValue) return undefined;
+
+  // Already a full ISO date (YYYY-MM-DD)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dayValue)) return dayValue;
+
+  // Just a number (e.g., "17", "18", "25")
+  const dayNum = parseInt(dayValue, 10);
+  if (!isNaN(dayNum) && dayNum >= 1 && dayNum <= 31) {
+    // Trip is July 17-26, 2026. If day <= 26, it's July; otherwise something's off.
+    const month = dayNum >= 17 && dayNum <= 31 ? '07' : '07'; // Always July for this trip
+    return `2026-${month}-${String(dayNum).padStart(2, '0')}`;
+  }
+
+  // Handle "Jul 17" or "July 17" or "Jul 17, 2026" patterns
+  const monthMatch = dayValue.match(/(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})/i);
+  if (monthMatch) {
+    const months: Record<string, string> = {
+      jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+      jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
+    };
+    const monthStr = dayValue.substring(0, 3).toLowerCase();
+    const monthNum = months[monthStr] || '07';
+    const day = String(parseInt(monthMatch[1], 10)).padStart(2, '0');
+    return `2026-${monthNum}-${day}`;
+  }
+
+  // Fallback: return as-is and let PostgreSQL handle it (may fail)
+  return dayValue;
 }
 
 // Parse key: value fields from a block body

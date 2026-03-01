@@ -113,10 +113,13 @@ For each region/stop, provide:
 - Booking link or instructions
 - Suggested day/time slot
 
-### 3. Food (1-2 restaurant picks per region)
+### 3. Food (3 meals per day: breakfast, lunch, dinner)
+- Every day should have a plan for breakfast, lunch, and dinner
 - Focus on places with strong GF/DF options or naturally accommodating cuisines
 - Note if reservations are needed and how far in advance
-- Price range per person
+- Price range per person (costs are always for 2 people in budget)
+- Use price_estimate_pp for per-person cost; the budget system multiplies by 2 automatically
+- Breakfast is often included at boutique hotels; if so, note that (price_estimate_pp: 0)
 
 ### 4. Transport Between Regions
 - How to get from one stop to the next (rental car, train, private transfer)
@@ -215,12 +218,18 @@ status: proposed
 action: add_restaurant
 region: lisbon
 name: Belcanto (Jose Avillez)
+price_estimate_pp: 90
 price_range_eur: 60-120pp
 gf_df_friendly: true
+gf_df_rating: green
 reservation_needed: true
 reservation_advance: 2-3 weeks
+day: 2026-07-21
+meal: dinner
 notes: Michelin 2-star, Portuguese fine dining. Strong GF/DF accommodation.
 [/TRAVEL_DATA]
+
+CRITICAL FORMAT RULES for day field: ALWAYS use full ISO date format YYYY-MM-DD (e.g., 2026-07-17, 2026-07-18). NEVER use just a day number like "17" or "18". The trip runs July 17-25, 2026, so days should be 2026-07-17 through 2026-07-25.
 
 **Set transport between regions:**
 [TRAVEL_DATA]
