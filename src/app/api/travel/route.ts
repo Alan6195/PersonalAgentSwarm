@@ -307,12 +307,22 @@ function buildDayByDay(items: any[]): DayEntry[] {
     { name: "algarve", label: "Algarve", start: "2026-07-23", end: "2026-07-26", nights: 3 },
   ];
 
-  // Build item lookup by region
+  // Build item lookup by region (for hotels, transport, and unassigned items)
   const itemsByRegion = new Map<string, any[]>();
   for (const item of items) {
     const region = item.region.toLowerCase();
     if (!itemsByRegion.has(region)) itemsByRegion.set(region, []);
     itemsByRegion.get(region)!.push(item);
+  }
+
+  // Build item lookup by date (for day-assigned activities and restaurants, across ALL regions)
+  const itemsByDate = new Map<string, any[]>();
+  for (const item of items) {
+    if (item.day) {
+      const dateKey = new Date(item.day).toISOString().split("T")[0];
+      if (!itemsByDate.has(dateKey)) itemsByDate.set(dateKey, []);
+      itemsByDate.get(dateKey)!.push(item);
+    }
   }
 
   const days: DayEntry[] = [];
@@ -321,8 +331,6 @@ function buildDayByDay(items: any[]): DayEntry[] {
   for (const region of regions) {
     const regionItems = itemsByRegion.get(region.name) || [];
     const hotel = regionItems.find((i: any) => i.item_type === "hotel") || null;
-    const activities = regionItems.filter((i: any) => i.item_type === "activity");
-    const restaurants = regionItems.filter((i: any) => i.item_type === "restaurant");
 
     // Find transport TO this region (stored as "prev_to_current" region key)
     const transportItems = items.filter(
@@ -336,40 +344,34 @@ function buildDayByDay(items: any[]): DayEntry[] {
       date.setDate(date.getDate() + n);
       const dateStr = date.toISOString().split("T")[0];
 
-      // Activities for this specific day (if day field matches)
-      const dayActivities = activities.filter((a: any) => {
-        if (a.day) {
-          const actDay = new Date(a.day).toISOString().split("T")[0];
-          return actDay === dateStr;
-        }
-        return false;
-      });
+      // Get ALL items for this date across ALL regions (not just current region)
+      const allDateItems = itemsByDate.get(dateStr) || [];
 
-      // If no day-specific activities, spread them across days
+      // Activities for this specific day (from any region)
+      const dayActivities = allDateItems.filter((a: any) => a.item_type === "activity");
+
+      // If no day-specific activities, fall back to region's unassigned activities
+      const regionActivities = regionItems.filter((i: any) => i.item_type === "activity");
       const fallbackActivities =
         dayActivities.length === 0 && n === 1
-          ? activities.filter((a: any) => !a.day)
+          ? regionActivities.filter((a: any) => !a.day)
           : [];
 
-      // Distribute restaurants: day-specific first, then spread evenly across region nights
-      const dayRestaurants = restaurants.filter((r: any) => {
-        if (r.day) {
-          const rDay = new Date(r.day).toISOString().split("T")[0];
-          return rDay === dateStr;
+      // Restaurants for this specific day (from any region)
+      const dayRestaurants = allDateItems.filter((r: any) => r.item_type === "restaurant");
+
+      // Fallback: unassigned restaurants from this region
+      const regionRestaurants = regionItems.filter((i: any) => i.item_type === "restaurant");
+      let fallbackRestaurants: any[] = [];
+      if (dayRestaurants.length === 0) {
+        const unassigned = regionRestaurants.filter((r: any) => !r.day);
+        if (n === 0) {
+          fallbackRestaurants = unassigned;
+        } else {
+          // Spread unassigned across region nights
+          fallbackRestaurants = unassigned.filter((_: any, idx: number) => idx % region.nights === n);
         }
-        // If restaurant has a meal time (lunch/dinner) but no day, distribute by meal
-        if (r.time && !r.day) {
-          // Spread unassigned restaurants across days in the region
-          const unassignedIdx = restaurants.filter((x: any) => !x.day).indexOf(r);
-          return unassignedIdx % region.nights === n;
-        }
-        return false;
-      });
-      // Fallback: if no day-specific restaurants and it's the first day, show any unassigned ones
-      const fallbackRestaurants =
-        dayRestaurants.length === 0 && n === 0
-          ? restaurants.filter((r: any) => !r.day && !r.time)
-          : [];
+      }
 
       days.push({
         date: dateStr,
