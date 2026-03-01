@@ -221,8 +221,21 @@ const GF_DF_TIERS: Record<string, { label: string; color: string; bg: string; ic
 const QUICK_ACTIONS = [
   "Find hotels in Porto",
   "Search GF restaurants",
-  "Flight options PDX to OPO",
   "Budget summary",
+];
+
+const FLIGHT_QUICK_ACTIONS = [
+  "Search flights PDX to OPO July 17",
+  "Search return flights FAO to PDX July 26",
+  "Best Chase UR transfer options for Portugal",
+  "Compare United vs portal for PDX-OPO",
+];
+
+const CHASE_TRANSFER_PARTNERS = [
+  { name: "United MileagePlus", ratio: "1:1", best: true, note: "30-60K economy, dynamic pricing" },
+  { name: "Air Canada Aeroplan", ratio: "1:1", best: false, note: "40-60K economy, distance-based" },
+  { name: "British Airways Avios", ratio: "1:1", best: false, note: "Off-peak deals, short-haul better" },
+  { name: "Chase Travel Portal", ratio: "1.25-1.75x", best: false, note: "Any flight, no blackouts, Points Boost" },
 ];
 
 // ────────────────────────────────────────────
@@ -988,6 +1001,154 @@ function PointsGauge({ allocated, total, flights }: { allocated: number; total: 
 }
 
 // ────────────────────────────────────────────
+// Flights Section (always visible)
+// ────────────────────────────────────────────
+
+function FlightsSection({
+  flights,
+  totalPointsAllocated,
+  onChatSend,
+  onOpenChat,
+}: {
+  flights: TravelFlight[];
+  totalPointsAllocated: number;
+  onChatSend: (msg: string) => void;
+  onOpenChat: () => void;
+}) {
+  const [showPartners, setShowPartners] = useState(false);
+  const remaining = CHASE_UR_TOTAL - totalPointsAllocated;
+
+  return (
+    <div className="space-y-4">
+      <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+        <Plane className="w-4 h-4 text-amber-400" />
+        Flights & Points
+      </h2>
+
+      {/* Chase Sapphire Card Overview */}
+      <div className="card p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-8 rounded bg-gradient-to-br from-blue-700 to-blue-900 flex items-center justify-center shadow-md border border-blue-600/30">
+              <span className="text-[8px] font-bold text-white tracking-wider">SAPPHIRE</span>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-white">Chase Sapphire Preferred</p>
+              <p className="text-[10px] font-mono text-carbon-400">
+                {remaining.toLocaleString()} of {CHASE_UR_TOTAL.toLocaleString()} UR points available
+              </p>
+            </div>
+          </div>
+          <div className="text-right">
+            <p className="text-lg font-mono text-amber-400 font-bold">
+              {(remaining / 1000).toFixed(0)}K
+            </p>
+            <p className="text-[10px] font-mono text-carbon-500">pts available</p>
+          </div>
+        </div>
+
+        {/* Points gauge bar */}
+        <div className="mt-3 h-2.5 bg-carbon-800 rounded-full overflow-hidden">
+          {flights.filter(f => f.direction === "outbound" && f.points_cost).map((f, i) => (
+            <div
+              key={`out-${i}`}
+              className="h-full bg-cyan-400 float-left"
+              style={{ width: `${((f.points_cost || 0) / CHASE_UR_TOTAL) * 100}%` }}
+              title={`Outbound: ${(f.points_cost || 0).toLocaleString()} pts`}
+            />
+          ))}
+          {flights.filter(f => f.direction === "return" && f.points_cost).map((f, i) => (
+            <div
+              key={`ret-${i}`}
+              className="h-full bg-amber-400 float-left"
+              style={{ width: `${((f.points_cost || 0) / CHASE_UR_TOTAL) * 100}%` }}
+              title={`Return: ${(f.points_cost || 0).toLocaleString()} pts`}
+            />
+          ))}
+        </div>
+        {totalPointsAllocated > 0 && (
+          <div className="flex items-center gap-4 mt-2">
+            <div className="flex items-center gap-1.5">
+              <div className="w-2 h-2 rounded-full bg-cyan-400" />
+              <span className="text-[10px] font-mono text-carbon-400">
+                Outbound: {flights.filter(f => f.direction === "outbound").reduce((s, f) => s + (f.points_cost || 0), 0).toLocaleString()}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-2 h-2 rounded-full bg-amber-400" />
+              <span className="text-[10px] font-mono text-carbon-400">
+                Return: {flights.filter(f => f.direction === "return").reduce((s, f) => s + (f.points_cost || 0), 0).toLocaleString()}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Transfer Partners */}
+        <button
+          onClick={() => setShowPartners(!showPartners)}
+          className="mt-3 text-[10px] font-mono text-carbon-500 hover:text-amber-400 transition-colors flex items-center gap-1"
+        >
+          {showPartners ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+          Transfer Partners ({CHASE_TRANSFER_PARTNERS.length})
+        </button>
+        {showPartners && (
+          <div className="mt-2 space-y-1.5">
+            {CHASE_TRANSFER_PARTNERS.map((p) => (
+              <div
+                key={p.name}
+                className={cn(
+                  "flex items-center justify-between px-2.5 py-1.5 rounded text-[10px] font-mono",
+                  p.best ? "bg-cyan-500/10 border border-cyan-500/20" : "bg-carbon-800/50"
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  {p.best && <Star className="w-2.5 h-2.5 text-cyan-400" />}
+                  <span className={p.best ? "text-cyan-400" : "text-carbon-300"}>{p.name}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-carbon-500">{p.note}</span>
+                  <span className={cn("font-bold", p.best ? "text-cyan-400" : "text-amber-400/70")}>{p.ratio}</span>
+                </div>
+              </div>
+            ))}
+            <p className="text-[9px] text-carbon-600 mt-1 px-1">
+              Portal value: 1.25x base, up to 1.75x with Points Boost. Transfer ratio is 1:1 to airline partners.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Flight Cards or Empty State */}
+      {flights.length > 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {flights.map((f) => <FlightCard key={f.id} flight={f} />)}
+        </div>
+      ) : (
+        <div className="card p-6 text-center">
+          <Plane className="w-8 h-8 text-amber-400/20 mx-auto mb-3" />
+          <p className="text-sm text-carbon-400 mb-1">No flights tracked yet</p>
+          <p className="text-xs text-carbon-600 mb-4">
+            Ask the agent to search for flights. When you find one you like, tell it to track it.
+          </p>
+          <div className="flex flex-wrap justify-center gap-2">
+            {FLIGHT_QUICK_ACTIONS.map((qa) => (
+              <button
+                key={qa}
+                onClick={() => { onChatSend(qa); onOpenChat(); }}
+                className="text-[10px] font-mono text-cyan-400 bg-cyan-500/10 px-3 py-1.5 rounded-lg hover:bg-cyan-500/20 transition-colors flex items-center gap-1.5"
+              >
+                <Search className="w-2.5 h-2.5" />
+                {qa}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────
 // Day Card
 // ────────────────────────────────────────────
 
@@ -1286,19 +1447,13 @@ export default function TravelPage() {
         <StatCard label="Chase UR Points" value={totalPointsAllocated > 0 ? `${(totalPointsAllocated / 1000).toFixed(0)}K` : "100K"} sub={totalPointsAllocated > 0 ? `${((CHASE_UR_TOTAL - totalPointsAllocated) / 1000).toFixed(0)}K left` : "available"} icon={Coins} accent="#f59e0b" delay={200} />
       </div>
 
-      {/* Flights Section */}
-      {flights.length > 0 && (
-        <div className="space-y-4">
-          <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-            <Plane className="w-4 h-4 text-amber-400" />
-            Flights
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {flights.map((f) => <FlightCard key={f.id} flight={f} />)}
-          </div>
-          <PointsGauge allocated={totalPointsAllocated} total={CHASE_UR_TOTAL} flights={flights} />
-        </div>
-      )}
+      {/* Flights & Points Section */}
+      <FlightsSection
+        flights={flights}
+        totalPointsAllocated={totalPointsAllocated}
+        onChatSend={(msg) => handleChatSend(msg)}
+        onOpenChat={() => setChatOpen(true)}
+      />
 
       {/* Budget breakdown + Itinerary */}
       <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
