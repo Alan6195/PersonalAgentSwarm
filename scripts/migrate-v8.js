@@ -134,50 +134,42 @@ async function migrate() {
       `CREATE INDEX IF NOT EXISTS idx_content_performance_dim ON content_performance(dimension, period)`
     );
 
-    // 6. Seed cron jobs (idempotent: ON CONFLICT DO NOTHING)
+    // 6. Seed cron jobs (idempotent: check-then-insert)
     console.log("[Migrate v8] Seeding analytics cron jobs...");
 
-    // Analytics Snapshot: hourly at :15, fetches metrics for due snapshots
-    await client.query(`
-      INSERT INTO cron_jobs (name, description, schedule, agent_id, enabled, last_status)
-      VALUES (
-        'Analytics Snapshot',
-        'Fetch X API metrics for posts with due snapshot intervals. System job, no LLM needed.',
-        '15 * * * *',
-        'social-media',
-        true,
-        'pending'
-      )
-      ON CONFLICT (name) DO NOTHING
-    `);
+    const cronJobs = [
+      {
+        name: 'Analytics Snapshot',
+        description: 'Fetch X API metrics for posts with due snapshot intervals. System job, no LLM needed.',
+        schedule: '15 * * * *',
+      },
+      {
+        name: 'Content Perf Aggregation',
+        description: 'Recompute rolling content_performance stats from raw post_snapshots data. System job, no LLM needed.',
+        schedule: '0 5 * * *',
+      },
+      {
+        name: 'Performance Brief',
+        description: 'Warm-cache the performance brief markdown for injection into social-media agent prompt. System job, no LLM needed.',
+        schedule: '0 6 * * *',
+      },
+    ];
 
-    // Content Performance Aggregation: daily at 5 AM Mountain
-    await client.query(`
-      INSERT INTO cron_jobs (name, description, schedule, agent_id, enabled, last_status)
-      VALUES (
-        'Content Perf Aggregation',
-        'Recompute rolling content_performance stats from raw post_snapshots data. System job, no LLM needed.',
-        '0 5 * * *',
-        'social-media',
-        true,
-        'pending'
-      )
-      ON CONFLICT (name) DO NOTHING
-    `);
-
-    // Performance Brief Warm: daily at 6 AM Mountain (warm-cache the brief)
-    await client.query(`
-      INSERT INTO cron_jobs (name, description, schedule, agent_id, enabled, last_status)
-      VALUES (
-        'Performance Brief',
-        'Warm-cache the performance brief markdown for injection into social-media agent prompt. System job, no LLM needed.',
-        '0 6 * * *',
-        'social-media',
-        true,
-        'pending'
-      )
-      ON CONFLICT (name) DO NOTHING
-    `);
+    for (const job of cronJobs) {
+      const existing = await client.query(
+        `SELECT id FROM cron_jobs WHERE name = $1`,
+        [job.name]
+      );
+      if (existing.rows.length === 0) {
+        await client.query(`
+          INSERT INTO cron_jobs (name, description, schedule, agent_id, enabled, last_status, created_at, updated_at)
+          VALUES ($1, $2, $3, 'social-media', true, 'pending', NOW(), NOW())
+        `, [job.name, job.description, job.schedule]);
+        console.log(`[Migrate v8] Created cron job: ${job.name}`);
+      } else {
+        console.log(`[Migrate v8] Cron job already exists: ${job.name}`);
+      }
+    }
 
     await client.query("COMMIT");
     console.log("[Migrate v8] Migration complete.");
