@@ -12,6 +12,7 @@ import * as xIntelligence from '../services/x-intelligence';
 import * as twitter from '../services/twitter';
 import * as googleCalendar from '../services/google-calendar';
 import * as travelStateService from '../services/travel-state';
+import * as analyticsContext from '../services/analytics-context';
 import { query as dbQuery } from '../db';
 
 // All agents use persistent semantic memory (Tier 2: on-demand keyword recall)
@@ -226,6 +227,19 @@ export async function run(context: AgentContext): Promise<AgentResponse> {
             console.warn('[Executor] Web news fetch failed:', (searchErr as Error).message);
           }
         }
+      }
+    }
+
+    // For social-media, always inject the performance brief (analytics feedback loop)
+    if (context.agentId === 'social-media') {
+      try {
+        const brief = await analyticsContext.buildPerformanceBrief();
+        if (brief.length > 0) {
+          agentPrompt += `\n\n${brief}`;
+          console.log(`[Executor] Injected performance brief (${brief.length} chars) for social-media`);
+        }
+      } catch (briefErr) {
+        console.warn('[Executor] Performance brief injection failed:', (briefErr as Error).message);
       }
     }
 

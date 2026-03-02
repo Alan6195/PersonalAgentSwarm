@@ -387,6 +387,63 @@ export async function searchTweets(
 }
 
 // ------------------------------------------------------------------
+// Batch fetch tweet metrics (for analytics snapshots)
+// ------------------------------------------------------------------
+export interface TweetMetrics {
+  id: string;
+  likes: number;
+  retweets: number;
+  replies: number;
+  impressions: number;
+  bookmarks: number;
+  quote_tweets: number;
+}
+
+export async function getTweetMetrics(tweetIds: string[]): Promise<TweetMetrics[]> {
+  if (tweetIds.length === 0) return [];
+
+  const twitter = getClient();
+  const results: TweetMetrics[] = [];
+
+  // X API allows up to 100 IDs per request
+  const chunks: string[][] = [];
+  for (let i = 0; i < tweetIds.length; i += 100) {
+    chunks.push(tweetIds.slice(i, i + 100));
+  }
+
+  for (const chunk of chunks) {
+    try {
+      const response = await twitter.v2.tweets(chunk, {
+        'tweet.fields': ['public_metrics'],
+      });
+
+      if (response.data) {
+        for (const tweet of response.data) {
+          const m = tweet.public_metrics;
+          results.push({
+            id: tweet.id,
+            likes: m?.like_count ?? 0,
+            retweets: m?.retweet_count ?? 0,
+            replies: m?.reply_count ?? 0,
+            impressions: m?.impression_count ?? 0,
+            bookmarks: m?.bookmark_count ?? 0,
+            quote_tweets: m?.quote_count ?? 0,
+          });
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof ApiResponseError
+        ? `Twitter API ${err.code}: ${err.data?.detail ?? err.message}`
+        : (err as Error).message;
+      console.error(`[Twitter] getTweetMetrics failed for chunk: ${msg}`);
+      // Continue with other chunks rather than failing entirely
+    }
+  }
+
+  return results;
+}
+
+// ------------------------------------------------------------------
 // Like a tweet
 // ------------------------------------------------------------------
 export async function likeTweet(tweetId: string): Promise<void> {

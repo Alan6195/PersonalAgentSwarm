@@ -22,6 +22,8 @@ import { executeDeveloperTask } from './developer-executor';
 import { getPrompt } from '../agents/registry';
 import { checkBudget } from './cost-guardrails';
 import { runDailyMaintenance } from './memory-decay';
+import { processDueSnapshots, recomputeContentPerformance } from './analytics-ingestion';
+import { warmBriefCache } from './analytics-context';
 
 interface CronJob {
   id: number;
@@ -309,6 +311,78 @@ async function runJob(job: CronJob): Promise<void> {
       return;
     }
 
+    // Analytics Snapshot: system job, no LLM needed
+    if (job.name === 'Analytics Snapshot') {
+      console.log('[Cron] Running Analytics Snapshot (system job, no LLM)');
+      const snapResult = await processDueSnapshots();
+      const durationMs = Date.now() - startTime;
+      const summary = `Processed: ${snapResult.processed}, Failed: ${snapResult.failed}`;
+
+      await query(`UPDATE cron_runs SET status = 'success', duration_ms = $1, output_summary = $2, completed_at = NOW() WHERE id = $3`, [durationMs, summary, run.id]);
+      const nextRun = calculateNextRun(job.schedule);
+      await query(`UPDATE cron_jobs SET last_status = 'success', last_run_at = NOW(), next_run_at = $1, last_duration_ms = $2, run_count = run_count + 1, updated_at = NOW() WHERE id = $3`, [nextRun, durationMs, job.id]);
+      await taskManager.completeTask(task.id, { content: summary, tokensUsed: 0, costCents: 0, durationMs });
+
+      await activityLogger.log({
+        event_type: 'cron_completed',
+        agent_id: job.agent_id,
+        task_id: task.id,
+        channel: 'cron',
+        summary: `Analytics Snapshot: ${summary}`,
+      });
+
+      console.log(`[Cron] Analytics Snapshot completed (${durationMs}ms): ${summary}`);
+      return;
+    }
+
+    // Content Perf Aggregation: system job, no LLM needed
+    if (job.name === 'Content Perf Aggregation') {
+      console.log('[Cron] Running Content Perf Aggregation (system job, no LLM)');
+      const aggResult = await recomputeContentPerformance();
+      const durationMs = Date.now() - startTime;
+      const summary = `Dimensions updated: ${aggResult.dimensions}`;
+
+      await query(`UPDATE cron_runs SET status = 'success', duration_ms = $1, output_summary = $2, completed_at = NOW() WHERE id = $3`, [durationMs, summary, run.id]);
+      const nextRun = calculateNextRun(job.schedule);
+      await query(`UPDATE cron_jobs SET last_status = 'success', last_run_at = NOW(), next_run_at = $1, last_duration_ms = $2, run_count = run_count + 1, updated_at = NOW() WHERE id = $3`, [nextRun, durationMs, job.id]);
+      await taskManager.completeTask(task.id, { content: summary, tokensUsed: 0, costCents: 0, durationMs });
+
+      await activityLogger.log({
+        event_type: 'cron_completed',
+        agent_id: job.agent_id,
+        task_id: task.id,
+        channel: 'cron',
+        summary: `Content Perf Aggregation: ${summary}`,
+      });
+
+      console.log(`[Cron] Content Perf Aggregation completed (${durationMs}ms): ${summary}`);
+      return;
+    }
+
+    // Performance Brief: system job, no LLM needed (warm-cache the brief)
+    if (job.name === 'Performance Brief') {
+      console.log('[Cron] Running Performance Brief warm cache (system job, no LLM)');
+      const briefResult = await warmBriefCache();
+      const durationMs = Date.now() - startTime;
+      const summary = `Brief cached: ${briefResult.length} chars`;
+
+      await query(`UPDATE cron_runs SET status = 'success', duration_ms = $1, output_summary = $2, completed_at = NOW() WHERE id = $3`, [durationMs, summary, run.id]);
+      const nextRun = calculateNextRun(job.schedule);
+      await query(`UPDATE cron_jobs SET last_status = 'success', last_run_at = NOW(), next_run_at = $1, last_duration_ms = $2, run_count = run_count + 1, updated_at = NOW() WHERE id = $3`, [nextRun, durationMs, job.id]);
+      await taskManager.completeTask(task.id, { content: summary, tokensUsed: 0, costCents: 0, durationMs });
+
+      await activityLogger.log({
+        event_type: 'cron_completed',
+        agent_id: job.agent_id,
+        task_id: task.id,
+        channel: 'cron',
+        summary: `Performance Brief: ${summary}`,
+      });
+
+      console.log(`[Cron] Performance Brief completed (${durationMs}ms): ${summary}`);
+      return;
+    }
+
     // Standard execution: run through the executor
     const agentResponse = await executor.run({
       agentId: job.agent_id,
@@ -320,7 +394,7 @@ async function runJob(job: CronJob): Promise<void> {
 
     // If social-media agent, process Twitter action blocks
     if (job.agent_id === 'social-media') {
-      const twitterResult = await processTwitterActions(finalResponse, task.id);
+      const twitterResult = await processTwitterActions(finalResponse, task.id, job.name);
       finalResponse = twitterResult.result;
 
       if (twitterResult.actionTaken) {

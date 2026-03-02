@@ -1,6 +1,7 @@
 import * as twitter from './twitter';
-import * as atlasCloud from './atlas-cloud';
+import * as runway from './runway';
 import * as xIntelligence from './x-intelligence';
+import { recordPost } from './analytics-ingestion';
 
 export interface TwitterActionResult {
   actionTaken: boolean;
@@ -15,7 +16,8 @@ export interface TwitterActionResult {
  */
 export async function processTwitterActions(
   agentResponse: string,
-  taskId?: number
+  taskId?: number,
+  cronJobName?: string
 ): Promise<TwitterActionResult> {
   // Check if X is configured
   if (!twitter.isConfigured()) {
@@ -43,12 +45,14 @@ export async function processTwitterActions(
     const imagePrompt = imageMatch[1].trim();
     const tweetText = imageMatch[2].trim();
     try {
-      // Generate image via Atlas Cloud
-      const imageUrl = await atlasCloud.generateImage(imagePrompt);
+      // Generate image via Runway
+      const imageUrl = await runway.generateImage(imagePrompt);
       // Upload to Twitter
       const mediaId = await twitter.uploadMediaFromUrl(imageUrl, 'image');
       // Post tweet with media
       const posted = await twitter.postTweetWithMedia(tweetText, mediaId, taskId);
+      // Record for analytics (fire-and-forget)
+      recordPost({ tweetId: posted.id, content: tweetText, contentType: 'tweet_with_image', hasMedia: true, mediaType: 'image', taskId, cronJobName }).catch(e => console.warn('[Analytics] recordPost failed:', e.message));
       const cleanResponse = agentResponse.replace(
         /\[ACTION:TWEET_WITH_IMAGE\]\s*IMAGE_PROMPT:\s*.+?\s*\nTWEET:\s*.+?(?:\n\n|\[ACTION:|$)/s,
         ''
@@ -64,6 +68,7 @@ export async function processTwitterActions(
       console.error(`[TwitterActions] Image generation/upload failed, posting text-only: ${(err as Error).message}`);
       try {
         const posted = await twitter.postTweet(tweetText, taskId);
+        recordPost({ tweetId: posted.id, content: tweetText, contentType: 'tweet', taskId, cronJobName }).catch(e => console.warn('[Analytics] recordPost failed:', e.message));
         const cleanResponse = agentResponse.replace(
           /\[ACTION:TWEET_WITH_IMAGE\]\s*IMAGE_PROMPT:\s*.+?\s*\nTWEET:\s*.+?(?:\n\n|\[ACTION:|$)/s,
           ''
@@ -97,12 +102,13 @@ export async function processTwitterActions(
     const videoPrompt = videoMatch[1].trim();
     const tweetText = videoMatch[2].trim();
     try {
-      // Generate video via Atlas Cloud
-      const videoUrl = await atlasCloud.generateVideo(videoPrompt);
+      // Generate video via Runway
+      const videoUrl = await runway.generateVideo(videoPrompt);
       // Upload to Twitter
       const mediaId = await twitter.uploadMediaFromUrl(videoUrl, 'video');
       // Post tweet with media
       const posted = await twitter.postTweetWithMedia(tweetText, mediaId, taskId);
+      recordPost({ tweetId: posted.id, content: tweetText, contentType: 'tweet_with_video', hasMedia: true, mediaType: 'video', taskId, cronJobName }).catch(e => console.warn('[Analytics] recordPost failed:', e.message));
       const cleanResponse = agentResponse.replace(
         /\[ACTION:TWEET_WITH_VIDEO\]\s*VIDEO_PROMPT:\s*.+?\s*\nTWEET:\s*.+?(?:\n\n|\[ACTION:|$)/s,
         ''
@@ -118,6 +124,7 @@ export async function processTwitterActions(
       console.error(`[TwitterActions] Video generation/upload failed, posting text-only: ${(err as Error).message}`);
       try {
         const posted = await twitter.postTweet(tweetText, taskId);
+        recordPost({ tweetId: posted.id, content: tweetText, contentType: 'tweet', taskId, cronJobName }).catch(e => console.warn('[Analytics] recordPost failed:', e.message));
         const cleanResponse = agentResponse.replace(
           /\[ACTION:TWEET_WITH_VIDEO\]\s*VIDEO_PROMPT:\s*.+?\s*\nTWEET:\s*.+?(?:\n\n|\[ACTION:|$)/s,
           ''
@@ -147,6 +154,7 @@ export async function processTwitterActions(
     const tweetText = tweetMatch[1].trim();
     try {
       const posted = await twitter.postTweet(tweetText, taskId);
+      recordPost({ tweetId: posted.id, content: tweetText, contentType: 'tweet', taskId, cronJobName }).catch(e => console.warn('[Analytics] recordPost failed:', e.message));
       const cleanResponse = agentResponse.replace(
         /\[ACTION:TWEET\]\s*.+?(?:\n\n|\[ACTION:|$)/s,
         ''
@@ -184,6 +192,18 @@ export async function processTwitterActions(
     if (tweets.length > 0) {
       try {
         const posted = await twitter.postThread(tweets, taskId);
+        // Record each tweet in the thread for analytics
+        const threadId = posted.ids[0];
+        for (let i = 0; i < posted.ids.length; i++) {
+          recordPost({
+            tweetId: posted.ids[i],
+            threadId,
+            content: posted.texts[i] || tweets[i],
+            contentType: i === 0 ? 'thread' : 'reply',
+            taskId,
+            cronJobName,
+          }).catch(e => console.warn('[Analytics] recordPost failed:', e.message));
+        }
         const cleanResponse = agentResponse.replace(
           /\[ACTION:THREAD\]\s*[\s\S]+?(?:\n\n(?!\d+\.)|\[ACTION:|$)/,
           ''
@@ -214,6 +234,7 @@ export async function processTwitterActions(
     const replyText = replyMatch[2].trim();
     try {
       const posted = await twitter.replyToTweet(tweetId, replyText, taskId);
+      recordPost({ tweetId: posted.id, content: replyText, contentType: 'reply', taskId, cronJobName }).catch(e => console.warn('[Analytics] recordPost failed:', e.message));
       const cleanResponse = agentResponse.replace(
         /\[ACTION:REPLY:\d+\]\s*.+?(?:\n\n|\[ACTION:|$)/s,
         ''

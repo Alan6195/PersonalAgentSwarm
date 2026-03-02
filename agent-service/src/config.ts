@@ -25,8 +25,8 @@ export const config = {
   GMAIL_CLIENT_SECRET: process.env.GMAIL_CLIENT_SECRET || '',
   GMAIL_REFRESH_TOKEN: process.env.GMAIL_REFRESH_TOKEN || '',
 
-  // Atlas Cloud (image/video generation)
-  ATLAS_CLOUD_API_KEY: process.env.ATLAS_CLOUD_API_KEY || '',
+  // Runway (image/video generation via Gen 4.5 Turbo)
+  RUNWAY_API_KEY: process.env.RUNWAY_API_KEY || '',
 
   // Webhook server
   WEBHOOK_PORT: parseInt(process.env.WEBHOOK_PORT || '3001', 10),
@@ -104,10 +104,10 @@ export function validateConfig(): void {
     console.log('[Config] Gmail credentials not set; wedding email features disabled.');
   }
 
-  if (config.ATLAS_CLOUD_API_KEY) {
-    console.log('[Config] Atlas Cloud API key found; image/video generation enabled.');
+  if (config.RUNWAY_API_KEY) {
+    console.log('[Config] Runway API key found; image/video generation enabled (Gen 4.5 Turbo).');
   } else {
-    console.log('[Config] ATLAS_CLOUD_API_KEY not set; image/video generation disabled.');
+    console.log('[Config] RUNWAY_API_KEY not set; image/video generation disabled.');
   }
 
   if (config.WEBHOOK_SECRET) {
