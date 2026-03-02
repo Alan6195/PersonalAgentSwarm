@@ -50,6 +50,7 @@ services:
       GMAIL_CLIENT_ID: ${GMAIL_CLIENT_ID:-}
       GMAIL_CLIENT_SECRET: ${GMAIL_CLIENT_SECRET:-}
       GMAIL_REFRESH_TOKEN: ${GMAIL_REFRESH_TOKEN:-}
+      RUNWAY_API_KEY: ${RUNWAY_API_KEY:-}
       NODE_ENV: development
     volumes:
       - ./agent-service:/app
