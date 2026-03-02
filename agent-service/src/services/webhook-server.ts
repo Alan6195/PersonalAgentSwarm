@@ -12,6 +12,12 @@ interface ContactPayload {
   phone?: string;
   message?: string;
   source?: string;
+  // Extended fields from chat leads
+  company?: string;
+  team_size?: string;
+  urgency?: string;
+  lead_score?: number;
+  lead_id?: string;
 }
 
 interface DashboardPayload {
@@ -89,6 +95,11 @@ function validatePayload(data: unknown): ContactPayload | null {
     phone: phone || undefined,
     message: typeof obj.message === 'string' ? obj.message.trim() : undefined,
     source: typeof obj.source === 'string' ? obj.source.trim() : undefined,
+    company: typeof obj.company === 'string' ? obj.company.trim() : undefined,
+    team_size: typeof obj.team_size === 'string' ? obj.team_size.trim() : undefined,
+    urgency: typeof obj.urgency === 'string' ? obj.urgency.trim() : undefined,
+    lead_score: typeof obj.lead_score === 'number' ? obj.lead_score : undefined,
+    lead_id: typeof obj.lead_id === 'string' ? obj.lead_id.trim() : undefined,
   };
 }
 
@@ -151,6 +162,11 @@ async function handleContactWebhook(
         contact_name: payload.name,
         contact_email: payload.email,
         contact_phone: payload.phone,
+        company: payload.company,
+        team_size: payload.team_size,
+        urgency: payload.urgency,
+        lead_score: payload.lead_score,
+        lead_id: payload.lead_id,
       },
     });
 
@@ -159,24 +175,34 @@ async function handleContactWebhook(
       agent_id: 'alan-os',
       task_id: task.id,
       channel: 'webhook',
-      summary: `New lead: ${payload.name} via ${payload.source || 'contact form'}`,
+      summary: `New lead: ${payload.name} via ${payload.source || 'contact form'}${payload.company ? ` (${payload.company})` : ''}`,
       metadata: {
         name: payload.name,
         email: payload.email,
         phone: payload.phone,
         source: payload.source,
+        company: payload.company,
+        team_size: payload.team_size,
+        urgency: payload.urgency,
+        lead_score: payload.lead_score,
+        lead_id: payload.lead_id,
       },
     });
 
     // Send Telegram notification
     if (sendTelegramNotification) {
+      const isChat = payload.source === 'chat';
       const lines = [
-        '\u{1F4E8} *New Contact Form Lead*',
+        isChat ? '\u{1F4AC} *New Chat Lead*' : '\u{1F4E8} *New Contact Form Lead*',
         '',
         `*Name:* ${payload.name}`,
       ];
       if (payload.email) lines.push(`*Email:* ${payload.email}`);
       if (payload.phone) lines.push(`*Phone:* ${payload.phone}`);
+      if (payload.company) lines.push(`*Company:* ${payload.company}`);
+      if (payload.team_size) lines.push(`*Team Size:* ${payload.team_size}`);
+      if (payload.urgency) lines.push(`*Urgency:* ${payload.urgency}`);
+      if (payload.lead_score != null) lines.push(`*Lead Score:* ${payload.lead_score}/100`);
       if (payload.source) lines.push(`*Source:* ${payload.source}`);
       if (payload.message) {
         lines.push('');
