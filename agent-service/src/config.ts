@@ -25,8 +25,11 @@ export const config = {
   GMAIL_CLIENT_SECRET: process.env.GMAIL_CLIENT_SECRET || '',
   GMAIL_REFRESH_TOKEN: process.env.GMAIL_REFRESH_TOKEN || '',
 
-  // Runway (image/video generation via Gen 4.5 Turbo)
+  // Runway (video generation via Gen 4.5)
   RUNWAY_API_KEY: process.env.RUNWAY_API_KEY || '',
+
+  // Unsplash (stock photos for authentic visual content)
+  UNSPLASH_ACCESS_KEY: process.env.UNSPLASH_ACCESS_KEY || '',
 
   // Webhook server
   WEBHOOK_PORT: parseInt(process.env.WEBHOOK_PORT || '3001', 10),
@@ -105,9 +108,15 @@ export function validateConfig(): void {
   }
 
   if (config.RUNWAY_API_KEY) {
-    console.log('[Config] Runway API key found; image/video generation enabled (Gen 4.5 Turbo).');
+    console.log('[Config] Runway API key found; video generation enabled (Gen 4.5).');
   } else {
-    console.log('[Config] RUNWAY_API_KEY not set; image/video generation disabled.');
+    console.log('[Config] RUNWAY_API_KEY not set; video generation disabled.');
+  }
+
+  if (config.UNSPLASH_ACCESS_KEY) {
+    console.log('[Config] Unsplash API key found; stock photo search enabled.');
+  } else {
+    console.log('[Config] UNSPLASH_ACCESS_KEY not set; stock photo search disabled.');
   }
 
   if (config.WEBHOOK_SECRET) {

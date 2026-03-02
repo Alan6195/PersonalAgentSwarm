@@ -128,14 +128,40 @@ export async function postThread(
 }
 
 // ------------------------------------------------------------------
+// Upload media from a Buffer directly and return the media_id
+// ------------------------------------------------------------------
+export async function uploadMediaFromBuffer(
+  buffer: Buffer,
+  mimeType: string = 'image/png',
+  type: 'image' | 'video' = 'image'
+): Promise<string> {
+  const twitter = getClient();
+
+  try {
+    console.log(`[Twitter] Uploading ${type} from buffer (${(buffer.length / 1024).toFixed(0)}KB)...`);
+
+    // Use v1 media upload (v2 media upload is still buggy)
+    const mediaId = await twitter.v1.uploadMedia(buffer, {
+      mimeType,
+      ...(type === 'video' ? { type: 'longmp4' } : {}),
+    });
+
+    console.log(`[Twitter] Media uploaded, media_id: ${mediaId}`);
+    return mediaId;
+  } catch (err) {
+    const msg = (err as Error).message;
+    console.error(`[Twitter] Buffer media upload failed: ${msg}`);
+    throw new Error(`Failed to upload media from buffer: ${msg}`);
+  }
+}
+
+// ------------------------------------------------------------------
 // Upload media from a URL and return the media_id
 // ------------------------------------------------------------------
 export async function uploadMediaFromUrl(
   mediaUrl: string,
   type: 'image' | 'video' = 'image'
 ): Promise<string> {
-  const twitter = getClient();
-
   try {
     // Download the media file into a Buffer
     console.log(`[Twitter] Downloading ${type} from URL: ${mediaUrl.substring(0, 100)}...`);
@@ -146,21 +172,13 @@ export async function uploadMediaFromUrl(
     const arrayBuffer = await response.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    console.log(`[Twitter] Uploading ${type} (${(buffer.length / 1024).toFixed(0)}KB)...`);
-
-    // Use v1 media upload (v2 media upload is still buggy)
+    // Delegate to buffer upload
     const mimeType = type === 'video' ? 'video/mp4' : 'image/png';
-    const mediaId = await twitter.v1.uploadMedia(buffer, {
-      mimeType,
-      ...(type === 'video' ? { type: 'longmp4' } : {}),
-    });
-
-    console.log(`[Twitter] Media uploaded, media_id: ${mediaId}`);
-    return mediaId;
+    return await uploadMediaFromBuffer(buffer, mimeType, type);
   } catch (err) {
     const msg = (err as Error).message;
-    console.error(`[Twitter] Media upload failed: ${msg}`);
-    throw new Error(`Failed to upload media: ${msg}`);
+    console.error(`[Twitter] Media download/upload failed: ${msg}`);
+    throw new Error(`Failed to upload media from URL: ${msg}`);
   }
 }
 
