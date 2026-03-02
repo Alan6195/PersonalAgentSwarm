@@ -14,6 +14,7 @@ import * as executor from '../agents/executor';
 import * as taskManager from './task-manager';
 import * as activityLogger from './activity-logger';
 import { processTwitterActions } from './twitter-actions';
+import { processDevRequestActions } from './dev-request-actions';
 import { processEmailActions } from './email-actions';
 import { processGmailActions } from './gmail-actions';
 import { processWeddingDataActions } from './wedding-data-actions';
@@ -407,6 +408,12 @@ async function runJob(job: CronJob): Promise<void> {
           metadata: { action_type: twitterResult.actionType, cron_job: job.name },
         });
       }
+
+      // Also process any cross-agent dev request blocks
+      const devReqResult = await processDevRequestActions(
+        finalResponse, 'social-media', task.id, telegramNotify ?? undefined
+      );
+      finalResponse = devReqResult.result;
     }
 
     // If life-admin agent, process email action blocks

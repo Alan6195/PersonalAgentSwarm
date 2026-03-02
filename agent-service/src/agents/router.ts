@@ -5,6 +5,7 @@ import * as executor from './executor';
 import * as taskManager from '../services/task-manager';
 import * as activityLogger from '../services/activity-logger';
 import { processTwitterActions } from '../services/twitter-actions';
+import { processDevRequestActions } from '../services/dev-request-actions';
 import { processEmailActions } from '../services/email-actions';
 import { processGmailActions } from '../services/gmail-actions';
 import { processWeddingDataActions } from '../services/wedding-data-actions';
@@ -287,6 +288,12 @@ export async function handleUserMessage(
               metadata: { action_type: twitterResult.actionType },
             });
           }
+
+          // Also process any cross-agent dev request blocks
+          const devReqResult = await processDevRequestActions(
+            finalResponse, 'social-media', subTask.id, progressNotifier ?? undefined
+          );
+          finalResponse = devReqResult.result;
         }
 
         // If life-admin agent, process any email action blocks
