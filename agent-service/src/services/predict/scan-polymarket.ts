@@ -77,7 +77,7 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
       return [];
     }
 
-    const data = await res.json();
+    const data: any = await res.json();
     const markets: PolyMarketRaw[] = Array.isArray(data) ? data : (data.data || data.markets || []);
 
     console.log(`[PolyScan] Fetched ${markets.length} active markets`);
@@ -260,7 +260,7 @@ async function fetchOrderBook(conditionId: string): Promise<OrderBookSummary | n
       return null;
     }
 
-    const book = await res.json();
+    const book: any = await res.json();
 
     // Parse bids/asks to get mid price
     const bids = (book.bids || []).map((b: any) => ({ price: parseFloat(b.price), size: parseFloat(b.size) }));
