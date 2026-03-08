@@ -71,10 +71,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
 
       {/* Main content */}
-      <main className="flex-1 overflow-auto grid-bg pt-14 md:pt-0">
-        <div className="max-w-[1600px] mx-auto p-4 sm:p-6 lg:p-8">
-          {children}
-        </div>
+      <main className={cn("flex-1 overflow-auto pt-14 md:pt-0", pathname !== "/predict" && "grid-bg")}>
+        {pathname === "/predict" ? (
+          children
+        ) : (
+          <div className="max-w-[1600px] mx-auto p-4 sm:p-6 lg:p-8">
+            {children}
+          </div>
+        )}
       </main>
     </div>
   );

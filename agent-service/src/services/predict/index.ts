@@ -8,8 +8,8 @@
 export { lmsrCost, lmsrProb, lmsrShareCost, bayesUpdate, logPosterior, kellyFraction, fractionalKelly, betSize, hedgeProfit, isHedgeable, rewardScore, expectedReturn, simpleExpectedReturn } from './model';
 
 // Risk gate
-export { validateTrade, checkSystemPause, updateDailyRisk, recordTradeOpened, recordTradeClosed, resetDailyRisk, RISK_LIMITS } from './risk-gate';
-export type { TradeCandidate, RiskCheck } from './risk-gate';
+export { validateTrade, checkSystemPause, updateDailyRisk, recordTradeOpened, recordTradeClosed, resetDailyRisk, RISK_LIMITS, POLY_RISK_LIMITS, getRiskLimits } from './risk-gate';
+export type { TradeCandidate, RiskCheck, RiskLimits } from './risk-gate';
 
 // Scanner
 export { scanManifold, analyzeMarkets, validateModelAccess } from './scan';
@@ -25,8 +25,16 @@ export { maybeLogHypothesis, getConfirmedHypotheses, runWeeklyReview } from './l
 // Performance context
 export { buildPerformanceBrief } from './context';
 
+// Polymarket scanner
+export { scanPolymarket } from './scan-polymarket';
+export type { PolyCandidate, PolyMarketRaw } from './scan-polymarket';
+
+// Polymarket execution
+export { executePolymarketTrade, getUSDCBalance } from './execute-polymarket';
+export type { PolyTradeResult } from './execute-polymarket';
+
 // Cron handlers
-export { handleManifoldScan, handleEquitySnapshot, handleDailyRiskReset, handleResolutionCheck, handleHypothesisReview } from './cron';
+export { handleManifoldScan, handlePolymarketScan, handleEquitySnapshot, handleDailyRiskReset, handleResolutionCheck, handleHypothesisReview } from './cron';
 
 // Telegram commands
 export { handlePredictCommand } from './telegram';

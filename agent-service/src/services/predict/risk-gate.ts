@@ -36,6 +36,25 @@ export const RISK_LIMITS: RiskLimits = {
   minBet: 1.00,
 };
 
+// Polymarket-specific overrides for $50 starting bankroll, 5-min markets
+// 15% Kelly (vs 25% Manifold) because 5-min markets are noisier
+export const POLY_RISK_LIMITS: RiskLimits = {
+  maxPositionPct: 0.05,       // 5% = $2.50 max per trade
+  maxCategoryPct: 0.20,       // 20% = $10 max per category
+  maxTotalExposurePct: 0.40,  // 40% = $20 max deployed
+  dailyLossPausePct: 0.08,    // 8% = $4 daily loss pause
+  drawdownPausePct: 0.15,     // 15% = $7.50 drawdown pause
+  minEdge: 0.04,              // same as Manifold
+  minBet: 0.50,               // lower min for $50 bankroll
+};
+
+/**
+ * Get risk limits for a platform
+ */
+export function getRiskLimits(platform: string): RiskLimits {
+  return platform === 'polymarket' ? POLY_RISK_LIMITS : RISK_LIMITS;
+}
+
 export interface RiskCheck {
   approved: boolean;
   betSize: number;
@@ -58,6 +77,7 @@ export interface TradeCandidate {
  */
 export async function validateTrade(candidate: TradeCandidate, bankroll: number): Promise<RiskCheck> {
   const { platform, category, betSize, edge, expectedReturn: er, pModel } = candidate;
+  const limits = getRiskLimits(platform);
 
   // Get current risk state
   const today = await getOrCreateDailyRisk(platform, bankroll);
@@ -76,24 +96,24 @@ export async function validateTrade(candidate: TradeCandidate, bankroll: number)
     : 0;
 
   const checks: Record<string, boolean> = {
-    edge_sufficient: edge >= RISK_LIMITS.minEdge,
-    min_bet: betSize >= RISK_LIMITS.minBet,
-    max_position: betSize <= bankroll * RISK_LIMITS.maxPositionPct,
+    edge_sufficient: edge >= limits.minEdge,
+    min_bet: betSize >= limits.minBet,
+    max_position: betSize <= bankroll * limits.maxPositionPct,
     expected_return_positive: er > 0,
     var_within_limit: var95 > -0.10,
-    daily_loss_ok: Math.abs(today.daily_loss) < bankroll * RISK_LIMITS.dailyLossPausePct,
-    drawdown_ok: mdd < RISK_LIMITS.drawdownPausePct,
-    category_exposure_ok: (categoryExposure + betSize) <= bankroll * RISK_LIMITS.maxCategoryPct,
-    total_exposure_ok: (totalExposure + betSize) <= bankroll * RISK_LIMITS.maxTotalExposurePct,
+    daily_loss_ok: Math.abs(today.daily_loss) < bankroll * limits.dailyLossPausePct,
+    drawdown_ok: mdd < limits.drawdownPausePct,
+    category_exposure_ok: (categoryExposure + betSize) <= bankroll * limits.maxCategoryPct,
+    total_exposure_ok: (totalExposure + betSize) <= bankroll * limits.maxTotalExposurePct,
     trading_not_paused: !today.trading_paused,
   };
 
   // Rejection logging
   if (!checks.edge_sufficient) {
-    console.error(`[RiskGate] REJECTED: edge ${edge.toFixed(4)} < ${RISK_LIMITS.minEdge}`);
+    console.error(`[RiskGate] REJECTED [${platform}]: edge ${edge.toFixed(4)} < ${limits.minEdge}`);
   }
   if (!checks.var_within_limit) {
-    console.error(`[RiskGate] REJECTED: VaR95 ${var95.toFixed(4)} < -0.10 (pModel=${pModel.toFixed(4)})`);
+    console.error(`[RiskGate] REJECTED [${platform}]: VaR95 ${var95.toFixed(4)} < -0.10 (pModel=${pModel.toFixed(4)})`);
   }
 
   const approved = Object.values(checks).every(Boolean);

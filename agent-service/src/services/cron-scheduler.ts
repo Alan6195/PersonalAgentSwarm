@@ -509,6 +509,26 @@ async function runJob(job: CronJob): Promise<void> {
       return;
     }
 
+    // Predict Polymarket Scan: 5-min crypto markets via LMSR+Bayes
+    if (job.name === 'Predict Polymarket Scan') {
+      console.log('[Cron] Running Predict Polymarket Scan');
+      const { handlePolymarketScan } = await import('./predict/cron');
+      const polySummary = await handlePolymarketScan(task.id);
+      const durationMs = Date.now() - startTime;
+
+      await query(`UPDATE cron_runs SET status = 'success', duration_ms = $1, output_summary = $2, completed_at = NOW() WHERE id = $3`, [durationMs, polySummary.substring(0, 2000), run.id]);
+      const nextRun = calculateNextRun(job.schedule);
+      await query(`UPDATE cron_jobs SET last_status = 'success', last_run_at = NOW(), next_run_at = $1, last_duration_ms = $2, run_count = run_count + 1, updated_at = NOW() WHERE id = $3`, [nextRun, durationMs, job.id]);
+      await taskManager.completeTask(task.id, { content: polySummary, tokensUsed: 0, costCents: 0, durationMs });
+
+      if (telegramNotify && !polySummary.includes('No Polymarket candidates')) {
+        try { await telegramNotify(`*Polymarket Scan*\n\n${polySummary}`); } catch { /* non-critical */ }
+      }
+
+      console.log(`[Cron] Predict Polymarket Scan completed (${durationMs}ms): ${polySummary}`);
+      return;
+    }
+
     // Standard execution: run through the executor
     const agentResponse = await executor.run({
       agentId: job.agent_id,

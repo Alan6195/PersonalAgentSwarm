@@ -48,6 +48,12 @@ export const config = {
   PREDICT_SCAN_MIN_DAYS: parseInt(process.env.PREDICT_SCAN_MIN_DAYS || '1', 10),
   PREDICT_SCAN_MAX_DAYS: parseInt(process.env.PREDICT_SCAN_MAX_DAYS || '60', 10),
 
+  // Predict: Polymarket config
+  PREDICT_POLY_DRY_RUN: (process.env.PREDICT_POLY_DRY_RUN || 'true') === 'true',
+  PREDICT_POLY_STARTING_BANKROLL: parseFloat(process.env.PREDICT_POLY_STARTING_BANKROLL || '50'),
+  PREDICT_POLY_KELLY_FRACTION: parseFloat(process.env.PREDICT_POLY_KELLY_FRACTION || '0.15'),
+  PREDICT_POLY_LMSR_B: parseFloat(process.env.PREDICT_POLY_LMSR_B || '100000'),
+
   // Unsplash (stock photos for authentic visual content)
   UNSPLASH_ACCESS_KEY: process.env.UNSPLASH_ACCESS_KEY || '',
 
@@ -174,6 +180,12 @@ export function validateConfig(): void {
     console.log(`[Config] Predict filters: traders>=${config.PREDICT_SCAN_MIN_TRADERS}, price=${config.PREDICT_SCAN_MIN_PRICE}-${config.PREDICT_SCAN_MAX_PRICE}, days=${config.PREDICT_SCAN_MIN_DAYS}-${config.PREDICT_SCAN_MAX_DAYS}`);
   } else {
     console.log('[Config] MANIFOLD_API_KEY not set; predict agent disabled.');
+  }
+
+  if (config.POLYMARKET_API_KEY && config.POLYMARKET_WALLET_KEY) {
+    console.log(`[Config] Polymarket credentials found; 5-min scanner enabled. DRY_RUN=${config.PREDICT_POLY_DRY_RUN}, bankroll=$${config.PREDICT_POLY_STARTING_BANKROLL}, kelly=${config.PREDICT_POLY_KELLY_FRACTION}`);
+  } else {
+    console.log('[Config] Polymarket credentials not set; Polymarket scanner disabled.');
   }
 
   console.log(`[Config] Cost guardrails: daily=$${(config.DAILY_BUDGET_LIMIT_CENTS / 100).toFixed(2)}, per-agent=$${(config.AGENT_DAILY_LIMIT_CENTS / 100).toFixed(2)}`);

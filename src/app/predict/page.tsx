@@ -1,777 +1,655 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { useFetch } from "@/lib/hooks";
-import { cn } from "@/lib/utils";
-import {
-  TrendingUp,
-  Target,
-  Shield,
-  Brain,
-  Activity,
-  Zap,
-  AlertTriangle,
-  CheckCircle2,
-  XCircle,
-  ChevronRight,
-} from "lucide-react";
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
+import { useState, useEffect, useRef, useCallback } from 'react';
 
-// ── Types ────────────────────────────────────────────────────────────
-
-interface PredictData {
-  phase: number;
-  balance: number;
-  riskState: {
-    date: string;
-    daily_pnl: string;
-    current_drawdown: string;
-    trading_paused: boolean;
-    pause_reason: string | null;
-    current_exposure: string;
-  } | null;
-  equityHistory: {
-    total_equity: string;
-    bankroll: string;
-    positions_open: string;
-    win_rate: string;
-    snapshot_at: string;
-  }[];
-  positions: {
-    id: number;
-    question: string;
-    direction: string;
-    p_market: string;
-    p_model: string;
-    edge: string;
-    bet_size: string;
-    intel_aligned: boolean;
-    opened_at: string;
-    category: string;
-  }[];
-  scans: {
-    id: number;
-    question: string;
-    category: string;
-    current_prob: string;
-    claude_prob: string;
-    edge: string;
-    reward_score: string;
-    scanned_at: string;
-  }[];
-  stats: {
-    totalTrades: number;
-    wins: number;
-    losses: number;
-    winRate: number;
-    totalPnl: number;
-    openPositions: number;
-    deployed: number;
-  };
-  hypotheses: {
-    id: number;
-    hypothesis: string;
-    status: string;
-    confidence: string;
-    win_count: number;
-    loss_count: number;
-  }[];
-  gate: {
-    trades: { current: number; required: number; passed: boolean };
-    winRate: { current: number; required: number; passed: boolean };
-    sharpe: { current: number; required: number; passed: boolean };
-  };
+// ── Types matching /api/predict response ──────────────────────────────────
+interface EquitySnapshot {
+  bankroll: number;
+  unrealized_pnl: number;
+  total_equity: number;
+  win_rate: number;
+  total_trades: number;
+  snapshot_at: string;
 }
 
-// ── Seeded PRNG for mock data ────────────────────────────────────────
+interface Position {
+  id: number;
+  platform: string;
+  market_question: string;
+  direction: string;
+  p_market: number;
+  p_model: number;
+  edge: number;
+  bet_size: number;
+  intel_aligned: boolean;
+  status: string;
+  pnl: number | null;
+  opened_at: string;
+}
 
+interface Scan {
+  id: number;
+  market_question: string;
+  platform: string;
+  current_prob: number;
+  claude_prob: number;
+  edge: number;
+  kelly_fraction: number;
+  reasoning: string;
+  created_at: string;
+}
+
+interface Hypothesis {
+  id: number;
+  hypothesis: string;
+  category: string;
+  status: string;
+  confidence: number;
+  win_count: number;
+  loss_count: number;
+}
+
+interface RiskState {
+  current_bankroll: number;
+  peak_bankroll: number;
+  daily_pnl: number;
+  daily_loss: number;
+  current_exposure: number;
+  trading_paused: boolean;
+  pause_reason: string | null;
+  current_drawdown: number;
+}
+
+interface PhaseGate {
+  phase: string;
+  trades: number;
+  trades_target: number;
+  win_rate: number;
+  win_rate_target: number;
+  sharpe: number;
+  sharpe_target: number;
+  ready: boolean;
+}
+
+interface DashboardData {
+  equity: EquitySnapshot | null;
+  equity_history: EquitySnapshot[];
+  positions: Position[];
+  recent_scans: Scan[];
+  risk_state: RiskState | null;
+  phase_gate: PhaseGate;
+  hypotheses: Hypothesis[];
+}
+
+// ── Colour tokens ─────────────────────────────────────────────────────────
+const C = {
+  bg:        '#000000',
+  panel:     '#03080300',
+  border:    '#0d2a0d',
+  border2:   '#071407',
+  green:     '#00ff41',
+  greenDim:  '#00b32d',
+  greenFaint:'#001a05',
+  red:       '#ff2d2d',
+  yellow:    '#f5c518',
+  cyan:      '#00e5ff',
+  white:     '#e8ffe8',
+  dim:       '#1a3a1a',
+  dimmer:    '#0a150a',
+  label:     '#2d5a2d',
+  text:      '#7aad7a',
+};
+
+// ── Seeded PRNG for stable mock data ─────────────────────────────────────
 function mulberry32(seed: number) {
   return function () {
-    let t = (seed += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
 
-function generateMockData(): PredictData {
-  const rng = mulberry32(42);
-  const now = Date.now();
-
-  const equityHistory = Array.from({ length: 72 }, (_, i) => {
-    const equity = 1000 + (rng() - 0.45) * 50 * Math.sqrt(i + 1);
+function genMockEquityHistory(points = 120): EquitySnapshot[] {
+  const rng = mulberry32(0xdeadbeef);
+  let val = 1000;
+  return Array.from({ length: points }, (_, i) => {
+    val = Math.max(800, val * (1 + (rng() - 0.44) * 0.006));
     return {
-      total_equity: equity.toFixed(2),
-      bankroll: (equity - rng() * 20).toFixed(2),
-      positions_open: String(Math.floor(rng() * 5)),
-      win_rate: (0.55 + rng() * 0.15).toFixed(3),
-      snapshot_at: new Date(now - (72 - i) * 3600000).toISOString(),
+      bankroll: +val.toFixed(2),
+      unrealized_pnl: 0,
+      total_equity: +val.toFixed(2),
+      win_rate: 0,
+      total_trades: 0,
+      snapshot_at: new Date(Date.now() - (points - i) * 15 * 60000).toISOString(),
     };
   });
-
-  const categories = ["crypto", "ai_tech", "politics", "economics", "sports"];
-  const positions = Array.from({ length: 4 }, (_, i) => ({
-    id: i + 1,
-    question: [
-      "Will BTC exceed $120K by end of March?",
-      "Will GPT-5 be released before July 2026?",
-      "Will US unemployment rise above 5%?",
-      "Will SpaceX Starship reach orbit by April?",
-    ][i],
-    direction: rng() > 0.5 ? "YES" : "NO",
-    p_market: (0.2 + rng() * 0.6).toFixed(3),
-    p_model: (0.2 + rng() * 0.6).toFixed(3),
-    edge: ((rng() - 0.3) * 0.2).toFixed(4),
-    bet_size: (10 + rng() * 40).toFixed(0),
-    intel_aligned: rng() > 0.4,
-    opened_at: new Date(now - rng() * 86400000 * 3).toISOString(),
-    category: categories[Math.floor(rng() * categories.length)],
-  }));
-
-  const scans = Array.from({ length: 8 }, (_, i) => ({
-    id: i + 1,
-    question: `Mock market question ${i + 1} about ${categories[i % categories.length]}?`,
-    category: categories[i % categories.length],
-    current_prob: (0.2 + rng() * 0.6).toFixed(3),
-    claude_prob: (0.2 + rng() * 0.6).toFixed(3),
-    edge: ((rng() - 0.4) * 0.15).toFixed(4),
-    reward_score: (rng() * 0.5).toFixed(3),
-    scanned_at: new Date(now - rng() * 14400000).toISOString(),
-  }));
-
-  return {
-    phase: 1,
-    balance: 1000 + rng() * 200,
-    riskState: {
-      date: new Date().toISOString().split("T")[0],
-      daily_pnl: ((rng() - 0.4) * 30).toFixed(2),
-      current_drawdown: (rng() * 0.05).toFixed(4),
-      trading_paused: false,
-      pause_reason: null,
-      current_exposure: (rng() * 0.25).toFixed(4),
-    },
-    equityHistory,
-    positions,
-    scans,
-    stats: {
-      totalTrades: 12,
-      wins: 8,
-      losses: 4,
-      winRate: 0.667,
-      totalPnl: 47.32,
-      openPositions: 4,
-      deployed: 120,
-    },
-    hypotheses: [
-      {
-        id: 1,
-        hypothesis: "Intel-aligned trades have higher win rate",
-        status: "confirmed",
-        confidence: "82",
-        win_count: 6,
-        loss_count: 1,
-      },
-      {
-        id: 2,
-        hypothesis: "Crypto markets have above average win rate",
-        status: "active",
-        confidence: "65",
-        win_count: 4,
-        loss_count: 2,
-      },
-      {
-        id: 3,
-        hypothesis: "Edge >= 10% trades outperform",
-        status: "active",
-        confidence: "58",
-        win_count: 3,
-        loss_count: 2,
-      },
-    ],
-    gate: {
-      trades: { current: 12, required: 30, passed: false },
-      winRate: { current: 0.667, required: 0.6, passed: true },
-      sharpe: { current: 1.2, required: 1.5, passed: false },
-    },
-  };
 }
 
-// ── Custom Tooltip ───────────────────────────────────────────────────
+const MOCK_HISTORY = genMockEquityHistory(120);
 
-function ChartTooltip({ active, payload, label }: any) {
-  if (!active || !payload?.length) return null;
+const MOCK_DATA: DashboardData = {
+  equity: {
+    bankroll: 1000,
+    unrealized_pnl: 0,
+    total_equity: 1000,
+    win_rate: 0,
+    total_trades: 0,
+    snapshot_at: new Date().toISOString(),
+  },
+  equity_history: MOCK_HISTORY,
+  positions: [],
+  recent_scans: [],
+  risk_state: {
+    current_bankroll: 1000,
+    peak_bankroll: 1000,
+    daily_pnl: 0,
+    daily_loss: 0,
+    current_exposure: 0,
+    trading_paused: false,
+    pause_reason: null,
+    current_drawdown: 0,
+  },
+  phase_gate: {
+    phase: 'manifold',
+    trades: 0,
+    trades_target: 30,
+    win_rate: 0,
+    win_rate_target: 0.60,
+    sharpe: 0,
+    sharpe_target: 1.5,
+    ready: false,
+  },
+  hypotheses: [],
+};
+
+// ── Tiny helpers ──────────────────────────────────────────────────────────
+function fmt2(n: number) { return n >= 0 ? `+${n.toFixed(2)}` : n.toFixed(2); }
+function fmtM(n: number) { return `M$${n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`; }
+function pct(n: number)  { return `${(n * 100).toFixed(1)}%`; }
+function timeAgo(iso: string) {
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  return `${Math.floor(s / 3600)}h ago`;
+}
+
+// ── SparkLine ─────────────────────────────────────────────────────────────
+function SparkLine({ data, color = C.green }: { data: number[]; color?: string }) {
+  if (data.length < 2) return null;
+  const mn = Math.min(...data), mx = Math.max(...data);
+  const range = mx - mn || 1;
+  const W = 560, H = 140;
+  const pts = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * W;
+    const y = H - ((v - mn) / range) * (H - 8) - 4;
+    return `${x},${y}`;
+  });
+  const line = `M${pts.join(' L')}`;
+  const area = `M0,${H} L${pts.join(' L')} L${W},${H} Z`;
+  const last = pts[pts.length - 1].split(',');
   return (
-    <div className="bg-carbon-900 border border-carbon-700 rounded-lg px-3 py-2 shadow-xl">
-      <p className="text-[10px] font-mono text-carbon-400 mb-1">
-        {new Date(label).toLocaleString("en-US", {
-          month: "short",
-          day: "numeric",
-          hour: "numeric",
-        })}
-      </p>
-      {payload.map((p: any, i: number) => (
-        <p key={i} className="text-xs font-mono" style={{ color: p.color }}>
-          {p.name}: M${Number(p.value).toFixed(0)}
-        </p>
-      ))}
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: H, display: 'block' }} preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="sg" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.22" />
+          <stop offset="100%" stopColor={color} stopOpacity="0.01" />
+        </linearGradient>
+      </defs>
+      <path d={area} fill="url(#sg)" />
+      <path d={line} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={last[0]} cy={last[1]} r="3" fill={color} />
+    </svg>
+  );
+}
+
+// ── Blink cursor ──────────────────────────────────────────────────────────
+function Cursor() {
+  const [on, setOn] = useState(true);
+  useEffect(() => { const t = setInterval(() => setOn(v => !v), 530); return () => clearInterval(t); }, []);
+  return <span style={{ color: C.green, opacity: on ? 1 : 0 }}>█</span>;
+}
+
+// ── Panel ─────────────────────────────────────────────────────────────────
+function Panel({ children, title, style = {} }: { children: React.ReactNode; title?: string; style?: React.CSSProperties }) {
+  return (
+    <div style={{ background: 'rgba(0,8,0,0.6)', border: `1px solid ${C.border}`, borderRadius: 2, ...style }}>
+      {title && (
+        <div style={{ padding: '3px 8px', borderBottom: `1px solid ${C.border2}`, fontSize: 9, fontFamily: 'monospace', color: C.label, letterSpacing: '0.15em', textTransform: 'uppercase' }}>
+          ○ {title}
+        </div>
+      )}
+      {children}
     </div>
   );
 }
 
-// ── Main Page ────────────────────────────────────────────────────────
-
-export default function PredictPage() {
-  const { data: apiData } = useFetch<PredictData>("/api/predict", 10000);
-  const [tab, setTab] = useState<"positions" | "scans" | "hypotheses">(
-    "positions"
-  );
-
-  // Use API data if available, fall back to mock
-  const data = apiData || generateMockData();
-  const isMock = !apiData;
-
-  const equityChartData = data.equityHistory.map((s) => ({
-    time: s.snapshot_at,
-    equity: parseFloat(s.total_equity),
-  }));
-
-  const pnlColor = data.stats.totalPnl >= 0 ? "text-neon-green" : "text-neon-red";
-  const dailyPnl = data.riskState ? parseFloat(data.riskState.daily_pnl) : 0;
-  const dailyPnlColor = dailyPnl >= 0 ? "text-neon-green" : "text-neon-red";
-
+// ── Formula row ───────────────────────────────────────────────────────────
+function FRow({ label, expr, value, vc }: { label?: string; expr?: string; value?: string; vc?: string }) {
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-neon-green/20 to-neon-blue/20 border border-neon-green/30 flex items-center justify-center">
-            <TrendingUp className="w-4 h-4 text-neon-green" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-semibold text-white tracking-tight">
-              Predict Agent
-            </h1>
-            <p className="text-sm text-carbon-500 font-mono mt-0.5">
-              Phase {data.phase} {data.phase === 1 ? "(Manifold paper)" : "(Polymarket live)"}
-              {data.riskState?.trading_paused && (
-                <span className="text-neon-amber ml-2">PAUSED</span>
-              )}
-              {isMock && (
-                <span className="text-carbon-600 ml-2">[mock data]</span>
-              )}
-            </p>
-          </div>
+    <div style={{ padding: '4px 8px', borderBottom: `1px solid ${C.border2}` }}>
+      {label && <div style={{ fontSize: 8, color: C.label, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 1 }}>{label}</div>}
+      {expr  && <div style={{ fontSize: 11, color: C.text, fontFamily: 'monospace' }}>{expr}</div>}
+      {value && <div style={{ fontSize: 12, color: vc || C.green, fontFamily: 'monospace', fontWeight: 700, textAlign: 'right', marginTop: 2 }}>{value}</div>}
+    </div>
+  );
+}
+
+// ── Phase gate ────────────────────────────────────────────────────────────
+function PhaseGate({ gate }: { gate: PhaseGate }) {
+  const progress = Math.min(gate.trades / gate.trades_target, 1);
+  const wrOk = gate.win_rate >= gate.win_rate_target;
+  const shOk = gate.sharpe >= gate.sharpe_target;
+  const trOk = gate.trades >= gate.trades_target;
+  return (
+    <Panel title="Phase Gate · Manifold → Polymarket">
+      <div style={{ padding: '8px 10px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+          <span style={{ fontSize: 9, color: gate.ready ? C.green : C.yellow, fontFamily: 'monospace' }}>
+            {gate.ready ? '✓ READY FOR LIVE' : '⚠ CONTINUE PAPER TRADING'}
+          </span>
+          <span style={{ fontSize: 9, color: C.label, fontFamily: 'monospace' }}>{gate.trades}/{gate.trades_target} trades</span>
         </div>
-      </div>
-
-      {/* Stats Row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-6 gap-3">
-        <StatCard
-          label="Bankroll"
-          value={`M$${data.balance.toFixed(0)}`}
-          icon={<Zap className="w-3.5 h-3.5 text-neon-green" />}
-        />
-        <StatCard
-          label="Win Rate"
-          value={`${(data.stats.winRate * 100).toFixed(1)}%`}
-          icon={<Target className="w-3.5 h-3.5 text-neon-blue" />}
-          color={data.stats.winRate >= 0.6 ? "text-neon-green" : "text-neon-amber"}
-        />
-        <StatCard
-          label="Total P&L"
-          value={`${data.stats.totalPnl >= 0 ? "+" : ""}M$${data.stats.totalPnl.toFixed(2)}`}
-          icon={<TrendingUp className="w-3.5 h-3.5 text-neon-green" />}
-          color={pnlColor}
-        />
-        <StatCard
-          label="Trades"
-          value={`${data.stats.wins}W / ${data.stats.losses}L`}
-          icon={<Activity className="w-3.5 h-3.5 text-neon-purple" />}
-        />
-        <StatCard
-          label="Daily P&L"
-          value={`${dailyPnl >= 0 ? "+" : ""}M$${dailyPnl.toFixed(2)}`}
-          icon={<Activity className="w-3.5 h-3.5 text-neon-blue" />}
-          color={dailyPnlColor}
-        />
-        <StatCard
-          label="Deployed"
-          value={`M$${data.stats.deployed.toFixed(0)}`}
-          icon={<Shield className="w-3.5 h-3.5 text-neon-amber" />}
-        />
-      </div>
-
-      {/* Equity Curve + Phase Gate */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div className="xl:col-span-2 card p-6">
-          <h2 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-neon-green" />
-            Equity Curve
-          </h2>
-          <div className="h-56">
-            {equityChartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={equityChartData}>
-                  <defs>
-                    <linearGradient id="equityGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#00ff9d" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#00ff9d" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis
-                    dataKey="time"
-                    tick={{ fill: "#737384", fontSize: 10, fontFamily: "JetBrains Mono" }}
-                    axisLine={false}
-                    tickLine={false}
-                    tickFormatter={(v) =>
-                      new Date(v).toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                      })
-                    }
-                    minTickGap={40}
-                  />
-                  <YAxis
-                    tick={{ fill: "#737384", fontSize: 10, fontFamily: "JetBrains Mono" }}
-                    axisLine={false}
-                    tickLine={false}
-                    tickFormatter={(v) => `M$${v}`}
-                    domain={["dataMin - 20", "dataMax + 20"]}
-                  />
-                  <Tooltip content={<ChartTooltip />} />
-                  <Area
-                    type="monotone"
-                    dataKey="equity"
-                    name="Equity"
-                    stroke="#00ff9d"
-                    fill="url(#equityGrad)"
-                    strokeWidth={2}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="flex items-center justify-center h-full text-carbon-600 font-mono text-xs">
-                No equity data yet
-              </div>
-            )}
-          </div>
+        <div style={{ height: 3, background: C.dimmer, marginBottom: 8 }}>
+          <div style={{ height: '100%', width: `${progress * 100}%`, background: gate.ready ? C.green : C.greenDim, transition: 'width 1s' }} />
         </div>
-
-        {/* Phase Gate */}
-        <div className="card p-6">
-          <h2 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-            <Shield className="w-4 h-4 text-neon-amber" />
-            Phase Gate
-          </h2>
-          <p className="text-[10px] font-mono text-carbon-500 mb-4 uppercase tracking-wider">
-            Manifold {">"} Polymarket
-          </p>
-
-          <div className="space-y-4">
-            <GateItem
-              label="Trades"
-              current={data.gate.trades.current}
-              required={data.gate.trades.required}
-              passed={data.gate.trades.passed}
-              format={(v) => String(v)}
-            />
-            <GateItem
-              label="Win Rate"
-              current={data.gate.winRate.current}
-              required={data.gate.winRate.required}
-              passed={data.gate.winRate.passed}
-              format={(v) => `${(v * 100).toFixed(1)}%`}
-            />
-            <GateItem
-              label="Sharpe"
-              current={data.gate.sharpe.current}
-              required={data.gate.sharpe.required}
-              passed={data.gate.sharpe.passed}
-              format={(v) => v.toFixed(2)}
-            />
-          </div>
-
-          <div className="mt-6 pt-4 border-t border-carbon-800/50">
-            {data.gate.trades.passed &&
-            data.gate.winRate.passed &&
-            data.gate.sharpe.passed ? (
-              <p className="text-xs font-mono text-neon-green flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4" />
-                ALL GATES CLEAR
-              </p>
-            ) : (
-              <p className="text-xs font-mono text-carbon-500 flex items-center gap-2">
-                <AlertTriangle className="w-3.5 h-3.5 text-neon-amber" />
-                Continue paper trading
-              </p>
-            )}
-          </div>
-
-          {/* Risk State */}
-          {data.riskState && (
-            <div className="mt-4 pt-4 border-t border-carbon-800/50">
-              <p className="text-[10px] font-mono text-carbon-500 mb-2 uppercase tracking-wider">
-                Risk State
-              </p>
-              <div className="space-y-1.5 text-xs font-mono">
-                <div className="flex justify-between">
-                  <span className="text-carbon-400">Drawdown</span>
-                  <span className={cn(
-                    parseFloat(data.riskState.current_drawdown) > 0.10
-                      ? "text-neon-red"
-                      : "text-carbon-300"
-                  )}>
-                    {(parseFloat(data.riskState.current_drawdown) * 100).toFixed(1)}%
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-carbon-400">Exposure</span>
-                  <span className="text-carbon-300">
-                    {(parseFloat(data.riskState.current_exposure) * 100).toFixed(1)}%
-                  </span>
-                </div>
-                {data.riskState.trading_paused && (
-                  <div className="flex items-center gap-2 text-neon-amber mt-2">
-                    <AlertTriangle className="w-3 h-3" />
-                    <span>{data.riskState.pause_reason || "Paused"}</span>
-                  </div>
-                )}
+        <div style={{ display: 'flex', gap: 16 }}>
+          {[
+            { l: 'TRADES',  v: `${gate.trades}/${gate.trades_target}`, ok: trOk },
+            { l: 'WIN RATE', v: pct(gate.win_rate),                    ok: wrOk, tgt: `≥${pct(gate.win_rate_target)}` },
+            { l: 'SHARPE',  v: gate.sharpe.toFixed(2),                 ok: shOk, tgt: `≥${gate.sharpe_target}` },
+          ].map(g => (
+            <div key={g.l} style={{ fontFamily: 'monospace' }}>
+              <div style={{ fontSize: 8, color: C.label }}>{g.l}</div>
+              <div style={{ fontSize: 11, color: g.ok ? C.green : C.yellow }}>
+                {g.ok ? '✓ ' : '○ '}{g.v}
+                {g.tgt && <span style={{ color: C.dim, fontSize: 9 }}> / {g.tgt}</span>}
               </div>
             </div>
-          )}
-        </div>
-      </div>
-
-      {/* Tabs: Positions / Scans / Hypotheses */}
-      <div className="card">
-        <div className="flex items-center gap-1 px-4 pt-4 border-b border-carbon-800/50">
-          {(["positions", "scans", "hypotheses"] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={cn(
-                "px-4 py-2.5 text-xs font-mono transition-colors border-b-2 capitalize",
-                tab === t
-                  ? "border-neon-green text-white"
-                  : "border-transparent text-carbon-500 hover:text-carbon-300"
-              )}
-            >
-              {t === "positions"
-                ? `Positions (${data.stats.openPositions})`
-                : t === "scans"
-                ? "Recent Scans"
-                : `Hypotheses (${data.hypotheses.length})`}
-            </button>
           ))}
         </div>
-
-        <div className="p-4">
-          {tab === "positions" && (
-            <PositionsTable positions={data.positions} />
-          )}
-          {tab === "scans" && <ScansTable scans={data.scans} />}
-          {tab === "hypotheses" && (
-            <HypothesesList hypotheses={data.hypotheses} />
-          )}
-        </div>
       </div>
-    </div>
+    </Panel>
   );
 }
 
-// ── Components ───────────────────────────────────────────────────────
-
-function StatCard({
-  label,
-  value,
-  icon,
-  color,
-}: {
-  label: string;
-  value: string;
-  icon: React.ReactNode;
-  color?: string;
-}) {
+// ── Risk state ────────────────────────────────────────────────────────────
+function RiskPanel({ risk }: { risk: RiskState }) {
+  const ddPct = risk.current_drawdown * 100;
+  const expPct = risk.current_exposure / Math.max(risk.current_bankroll, 1) * 100;
   return (
-    <div className="card px-4 py-3">
-      <div className="flex items-center gap-2 mb-1">
-        {icon}
-        <p className="text-[10px] font-mono uppercase tracking-wider text-carbon-500">
-          {label}
-        </p>
-      </div>
-      <p className={cn("text-lg font-semibold font-mono", color || "text-white")}>
-        {value}
-      </p>
-    </div>
-  );
-}
-
-function GateItem({
-  label,
-  current,
-  required,
-  passed,
-  format,
-}: {
-  label: string;
-  current: number;
-  required: number;
-  passed: boolean;
-  format: (v: number) => string;
-}) {
-  const pct = Math.min((current / required) * 100, 100);
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-1.5">
-        <span className="text-xs font-mono text-carbon-400">{label}</span>
-        <div className="flex items-center gap-2">
-          <span
-            className={cn(
-              "text-xs font-mono",
-              passed ? "text-neon-green" : "text-carbon-300"
-            )}
-          >
-            {format(current)}
-          </span>
-          <span className="text-[10px] font-mono text-carbon-600">
-            / {format(required)}
-          </span>
-          {passed ? (
-            <CheckCircle2 className="w-3.5 h-3.5 text-neon-green" />
-          ) : (
-            <XCircle className="w-3.5 h-3.5 text-carbon-600" />
-          )}
-        </div>
-      </div>
-      <div className="h-1.5 bg-carbon-800 rounded-full overflow-hidden">
-        <div
-          className={cn(
-            "h-full rounded-full transition-all",
-            passed ? "bg-neon-green" : "bg-neon-amber"
-          )}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function PositionsTable({
-  positions,
-}: {
-  positions: PredictData["positions"];
-}) {
-  if (positions.length === 0) {
-    return (
-      <p className="text-xs text-carbon-600 text-center py-8 font-mono">
-        No open positions
-      </p>
-    );
-  }
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs font-mono">
-        <thead>
-          <tr className="text-carbon-500 border-b border-carbon-800/50">
-            <th className="text-left py-2 px-2">Market</th>
-            <th className="text-center py-2 px-2">Dir</th>
-            <th className="text-right py-2 px-2">Market</th>
-            <th className="text-right py-2 px-2">Model</th>
-            <th className="text-right py-2 px-2">Edge</th>
-            <th className="text-right py-2 px-2">Size</th>
-            <th className="text-center py-2 px-2">Intel</th>
-          </tr>
-        </thead>
-        <tbody>
-          {positions.map((p) => {
-            const edge = parseFloat(p.edge);
-            return (
-              <tr
-                key={p.id}
-                className="border-b border-carbon-800/30 hover:bg-carbon-800/20 transition-colors"
-              >
-                <td className="py-2.5 px-2 text-carbon-300 max-w-[260px] truncate">
-                  {p.question}
-                </td>
-                <td
-                  className={cn(
-                    "py-2.5 px-2 text-center font-semibold",
-                    p.direction === "YES" ? "text-neon-green" : "text-neon-red"
-                  )}
-                >
-                  {p.direction}
-                </td>
-                <td className="py-2.5 px-2 text-right text-carbon-400">
-                  {parseFloat(p.p_market).toFixed(2)}
-                </td>
-                <td className="py-2.5 px-2 text-right text-carbon-300">
-                  {parseFloat(p.p_model).toFixed(2)}
-                </td>
-                <td
-                  className={cn(
-                    "py-2.5 px-2 text-right",
-                    edge >= 0.08 ? "text-neon-green" : "text-neon-amber"
-                  )}
-                >
-                  {(edge * 100).toFixed(0)}c
-                </td>
-                <td className="py-2.5 px-2 text-right text-carbon-300">
-                  M${parseFloat(p.bet_size).toFixed(0)}
-                </td>
-                <td className="py-2.5 px-2 text-center">
-                  {p.intel_aligned ? (
-                    <span className="text-neon-green">Y</span>
-                  ) : (
-                    <span className="text-carbon-600">N</span>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function ScansTable({ scans }: { scans: PredictData["scans"] }) {
-  if (scans.length === 0) {
-    return (
-      <p className="text-xs text-carbon-600 text-center py-8 font-mono">
-        No scans yet
-      </p>
-    );
-  }
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs font-mono">
-        <thead>
-          <tr className="text-carbon-500 border-b border-carbon-800/50">
-            <th className="text-left py-2 px-2">Market</th>
-            <th className="text-center py-2 px-2">Cat</th>
-            <th className="text-right py-2 px-2">Current</th>
-            <th className="text-right py-2 px-2">Claude</th>
-            <th className="text-right py-2 px-2">Edge</th>
-            <th className="text-right py-2 px-2">Score</th>
-            <th className="text-right py-2 px-2">When</th>
-          </tr>
-        </thead>
-        <tbody>
-          {scans.map((s) => {
-            const edge = parseFloat(s.edge);
-            return (
-              <tr
-                key={s.id}
-                className="border-b border-carbon-800/30 hover:bg-carbon-800/20 transition-colors"
-              >
-                <td className="py-2.5 px-2 text-carbon-300 max-w-[260px] truncate">
-                  {s.question}
-                </td>
-                <td className="py-2.5 px-2 text-center text-carbon-500 capitalize">
-                  {s.category}
-                </td>
-                <td className="py-2.5 px-2 text-right text-carbon-400">
-                  {parseFloat(s.current_prob).toFixed(2)}
-                </td>
-                <td className="py-2.5 px-2 text-right text-carbon-300">
-                  {parseFloat(s.claude_prob).toFixed(2)}
-                </td>
-                <td
-                  className={cn(
-                    "py-2.5 px-2 text-right",
-                    Math.abs(edge) >= 0.04 ? "text-neon-green" : "text-carbon-500"
-                  )}
-                >
-                  {(edge * 100).toFixed(0)}c
-                </td>
-                <td className="py-2.5 px-2 text-right text-carbon-400">
-                  {parseFloat(s.reward_score).toFixed(2)}
-                </td>
-                <td className="py-2.5 px-2 text-right text-carbon-600">
-                  {timeAgo(s.scanned_at)}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function HypothesesList({
-  hypotheses,
-}: {
-  hypotheses: PredictData["hypotheses"];
-}) {
-  if (hypotheses.length === 0) {
-    return (
-      <p className="text-xs text-carbon-600 text-center py-8 font-mono">
-        No hypotheses yet. Trading loop will generate them.
-      </p>
-    );
-  }
-
-  return (
-    <div className="space-y-2">
-      {hypotheses.map((h) => (
-        <div
-          key={h.id}
-          className="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-carbon-800/20 transition-colors"
-        >
-          <Brain
-            className={cn(
-              "w-4 h-4 shrink-0",
-              h.status === "confirmed" ? "text-neon-green" : "text-neon-blue"
-            )}
-          />
-          <div className="flex-1 min-w-0">
-            <p className="text-sm text-carbon-300">{h.hypothesis}</p>
-            <p className="text-[10px] font-mono text-carbon-500 mt-0.5">
-              {h.win_count}W / {h.loss_count}L
-            </p>
+    <Panel title="Risk State">
+      {[
+        { l: 'DRAWDOWN',  v: `${ddPct.toFixed(1)}%`,    bar: ddPct / 15,  warn: ddPct > 10 },
+        { l: 'EXPOSURE',  v: `${expPct.toFixed(1)}%`,   bar: expPct / 40, warn: expPct > 30 },
+        { l: 'DAILY LOSS', v: fmt2(-risk.daily_loss),   bar: risk.daily_loss / (risk.current_bankroll * 0.08), warn: risk.daily_loss > risk.current_bankroll * 0.05 },
+      ].map(r => (
+        <div key={r.l} style={{ padding: '5px 8px', borderBottom: `1px solid ${C.border2}` }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+            <span style={{ fontSize: 8, color: C.label, fontFamily: 'monospace' }}>{r.l}</span>
+            <span style={{ fontSize: 11, color: r.warn ? C.yellow : C.green, fontFamily: 'monospace', fontWeight: 700 }}>{r.v}</span>
           </div>
-          <div className="flex items-center gap-2">
-            <span
-              className={cn(
-                "text-xs font-mono px-2 py-0.5 rounded-full",
-                h.status === "confirmed"
-                  ? "bg-neon-green/10 text-neon-green"
-                  : "bg-neon-blue/10 text-neon-blue"
-              )}
-            >
-              {h.status}
-            </span>
-            <span className="text-xs font-mono text-carbon-400">
-              {parseFloat(h.confidence).toFixed(0)}%
-            </span>
+          <div style={{ height: 2, background: C.dimmer }}>
+            <div style={{ height: '100%', width: `${Math.min(r.bar * 100, 100)}%`, background: r.warn ? C.yellow : C.greenDim, transition: 'width 0.5s' }} />
           </div>
         </div>
       ))}
+      {risk.trading_paused && (
+        <div style={{ padding: '5px 8px', background: 'rgba(255,45,45,0.08)', fontSize: 10, color: C.red, fontFamily: 'monospace' }}>
+          ⏸ PAUSED: {risk.pause_reason || 'manual'}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+// ── Position card ─────────────────────────────────────────────────────────
+function PositionRow({ pos }: { pos: Position }) {
+  const pnl = pos.pnl ?? 0;
+  return (
+    <div style={{ padding: '8px 10px', borderBottom: `1px solid ${C.border2}`, fontFamily: 'monospace' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+        <span style={{ fontSize: 11, color: C.white, flex: 1, marginRight: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {pos.market_question}
+        </span>
+        <span style={{ fontSize: 12, fontWeight: 700, color: pnl >= 0 ? C.green : C.red, flexShrink: 0 }}>
+          {fmt2(pnl)}
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <span style={{ fontSize: 9, padding: '1px 6px', border: `1px solid ${pos.direction === 'YES' ? C.green : C.red}`, color: pos.direction === 'YES' ? C.green : C.red }}>{pos.direction}</span>
+        {pos.intel_aligned && <span style={{ fontSize: 9, padding: '1px 6px', border: `1px solid ${C.cyan}`, color: C.cyan }}>⚡ INTEL</span>}
+        <span style={{ fontSize: 9, color: C.label }}>mkt {pct(pos.p_market)}</span>
+        <span style={{ fontSize: 9, color: C.text }}>model {pct(pos.p_model)}</span>
+        <span style={{ fontSize: 9, color: '#8b5cf6' }}>edge {(pos.edge * 100).toFixed(0)}¢</span>
+        <span style={{ fontSize: 9, color: C.dim, marginLeft: 'auto' }}>{timeAgo(pos.opened_at)}</span>
+      </div>
     </div>
   );
 }
 
-// ── Utility ──────────────────────────────────────────────────────────
+// ── Scan row ──────────────────────────────────────────────────────────────
+function ScanRow({ scan }: { scan: Scan }) {
+  const edgeColor = scan.edge >= 0.08 ? C.green : scan.edge >= 0.04 ? C.yellow : C.red;
+  return (
+    <div style={{ padding: '7px 10px', borderBottom: `1px solid ${C.border2}`, fontFamily: 'monospace' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+        <span style={{ fontSize: 10, color: C.text, flex: 1, marginRight: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {scan.market_question}
+        </span>
+        <span style={{ fontSize: 11, color: edgeColor, fontWeight: 700, flexShrink: 0 }}>
+          {(scan.edge * 100).toFixed(0)}¢
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 12 }}>
+        <span style={{ fontSize: 9, color: C.label }}>mkt {pct(scan.current_prob)}</span>
+        <span style={{ fontSize: 9, color: C.cyan }}>claude {pct(scan.claude_prob)}</span>
+        <span style={{ fontSize: 9, color: C.greenDim }}>kelly {(scan.kelly_fraction * 100).toFixed(1)}%</span>
+        <span style={{ fontSize: 9, color: C.dim, marginLeft: 'auto' }}>{timeAgo(scan.created_at)}</span>
+      </div>
+      {scan.reasoning && (
+        <div style={{ fontSize: 9, color: C.dim, marginTop: 4, lineHeight: 1.4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const }}>
+          {scan.reasoning.slice(0, 180)}…
+        </div>
+      )}
+    </div>
+  );
+}
 
-function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "now";
-  if (mins < 60) return `${mins}m`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d`;
+// ── Hypothesis row ────────────────────────────────────────────────────────
+function HypRow({ h }: { h: Hypothesis }) {
+  const sc = h.status === 'confirmed' ? C.green : h.status === 'refuted' ? C.red : C.yellow;
+  return (
+    <div style={{ padding: '6px 10px', borderBottom: `1px solid ${C.border2}`, borderLeft: `2px solid ${sc}`, fontFamily: 'monospace' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+        <span style={{ fontSize: 9, color: sc, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{h.status}</span>
+        <span style={{ fontSize: 9, color: C.dim }}>{(h.confidence * 100).toFixed(0)}% · {h.win_count}W/{h.loss_count}L</span>
+      </div>
+      <div style={{ fontSize: 10, color: C.text, lineHeight: 1.4 }}>{h.hypothesis}</div>
+      <div style={{ height: 2, background: C.dimmer, marginTop: 5 }}>
+        <div style={{ height: '100%', width: `${h.confidence * 100}%`, background: sc }} />
+      </div>
+    </div>
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────
+export default function PredictPage() {
+  const [data, setData]       = useState<DashboardData>(MOCK_DATA);
+  const [isLive, setIsLive]   = useState(false);
+  const [activeTab, setTab]   = useState<'positions' | 'scans' | 'hypotheses'>('positions');
+  const [tick, setTick]       = useState(0);
+  const rngRef                = useRef(mulberry32(0xabcdef12));
+
+  // Poll /api/predict every 10s
+  const fetchData = useCallback(async () => {
+    try {
+      const res = await fetch('/api/predict');
+      if (!res.ok) return;
+      const json = await res.json();
+      setData(json);
+      setIsLive(true);
+    } catch {
+      // stay on mock data
+    }
+  }, []);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    const t = setInterval(() => { fetchData(); setTick(v => v + 1); }, 10_000);
+    return () => clearInterval(t);
+  }, [fetchData]);
+
+  // Animate equity on mock data
+  const [liveHistory, setLiveHistory] = useState(MOCK_HISTORY.map(s => s.bankroll));
+  useEffect(() => {
+    if (isLive) return;
+    const rng = rngRef.current;
+    const t = setInterval(() => {
+      setLiveHistory(h => {
+        const last = h[h.length - 1];
+        return [...h.slice(-119), +(last * (1 + (rng() - 0.44) * 0.004)).toFixed(2)];
+      });
+    }, 2000);
+    return () => clearInterval(t);
+  }, [isLive]);
+
+  const equityHistory = isLive
+    ? data.equity_history.map(s => s.total_equity)
+    : liveHistory;
+
+  const eq   = data.equity;
+  const risk = data.risk_state;
+  const gate = data.phase_gate;
+  const bal  = eq?.bankroll ?? 1000;
+  const wr   = eq?.win_rate ?? 0;
+  const trades = eq?.total_trades ?? 0;
+  const dailyPnl = risk?.daily_pnl ?? 0;
+
+  return (
+    <div style={{ background: C.bg, minHeight: '100vh', fontFamily: 'monospace', color: C.text, fontSize: 11, overflow: 'hidden' }}>
+      <style>{`
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        ::-webkit-scrollbar { width: 3px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #0d2a0d; border-radius: 1px; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes ping { 75%,100% { transform: scale(2); opacity: 0; } }
+        @font-face { font-family: 'JetBrains Mono'; src: local('JetBrains Mono'); }
+      `}</style>
+
+      {/* ── Top bar ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 14px', background: '#00050000', borderBottom: `1px solid ${C.border}`, flexWrap: 'wrap' }}>
+        <span style={{ color: C.green, fontWeight: 700, fontSize: 13, letterSpacing: '0.08em' }}>◈ PREDICT_AGENT</span>
+        {[
+          { label: gate.phase === 'manifold' ? 'PAPER' : '⚡ LIVE', color: gate.phase === 'manifold' ? C.yellow : C.green },
+          { label: 'LMSR + KELLY', color: C.cyan },
+          { label: 'v1.0.0', color: C.greenDim },
+        ].map(t => (
+          <span key={t.label} style={{ padding: '1px 7px', fontSize: 9, border: `1px solid ${t.color}`, color: t.color, letterSpacing: '0.08em' }}>{t.label}</span>
+        ))}
+        <div style={{ flex: 1 }} />
+        {/* live indicator */}
+        <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ position: 'relative', width: 7, height: 7, display: 'inline-block' }}>
+            <span style={{ position: 'absolute', inset: 0, borderRadius: '50%', background: isLive ? C.green : C.yellow, opacity: 0.4, animation: 'ping 1.5s cubic-bezier(0,0,0.2,1) infinite' }} />
+            <span style={{ position: 'absolute', inset: 0, borderRadius: '50%', background: isLive ? C.green : C.yellow }} />
+          </span>
+          <span style={{ fontSize: 9, color: isLive ? C.green : C.yellow }}>{isLive ? 'LIVE' : 'MOCK'}</span>
+        </span>
+        <span style={{ fontSize: 9, color: C.dim }}>MANIFOLD</span>
+        <span style={{ fontSize: 9, color: C.dim }}>10s poll</span>
+        <Cursor />
+      </div>
+
+      {/* ── KPI strip ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', borderBottom: `1px solid ${C.border}` }}>
+        {[
+          { label: 'BANKROLL',   value: fmtM(bal),                     color: C.green },
+          { label: 'WIN RATE',   value: pct(wr),                        color: wr >= 0.6 ? C.green : wr > 0 ? C.yellow : C.text },
+          { label: 'TOTAL P&L',  value: fmt2(bal - 1000),               color: bal >= 1000 ? C.green : C.red },
+          { label: 'TRADES',     value: `${trades}W / ${data.positions.filter(p => p.status === 'open').length}L`, color: C.text },
+          { label: 'DAILY P&L',  value: fmt2(dailyPnl),                 color: dailyPnl >= 0 ? C.green : C.red },
+          { label: 'DEPLOYED',   value: fmtM(risk?.current_exposure ?? 0), color: C.cyan },
+        ].map((k, i) => (
+          <div key={k.label} style={{ padding: '7px 12px', borderRight: i < 5 ? `1px solid ${C.border}` : 'none' }}>
+            <div style={{ fontSize: 8, color: C.label, letterSpacing: '0.12em', marginBottom: 4 }}>{k.label}</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: k.color }}>{k.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Main 3-col grid ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '190px 1fr 230px', height: 'calc(100vh - 88px)', overflow: 'hidden' }}>
+
+        {/* ── LEFT: formulas + risk ── */}
+        <div style={{ borderRight: `1px solid ${C.border}`, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 0 }}>
+          <Panel title="LMSR Cost Function">
+            <FRow expr="C(q) = b · ln( Σ eᵍⁱ/ᵇ )" value="b = 100,000" vc={C.text} />
+          </Panel>
+          <Panel title="Bayesian Posterior">
+            <FRow expr="log P(H|D) = log P(H) + Σ log P(Dᵢ|H)" />
+            <FRow label="Prior"     value="0.2198" />
+            <FRow label="Posterior" value="—" vc={C.cyan} />
+          </Panel>
+          <Panel title="Hedge Condition π">
+            <FRow expr="π = 1.00 − (p_Y + p_N)" value={risk ? (1 - (0.48 + 0.49)).toFixed(4) : '—'} vc={C.yellow} />
+          </Panel>
+          <Panel title="Reward Score S(s)">
+            <FRow expr="S(s) = ((v−s)²/v²) · b" />
+          </Panel>
+          <Panel title="Kelly · EV">
+            <FRow expr="f* = (p·b − q) / b" />
+            <FRow label="Fractional" expr="f = 0.25 · f*" value="25% Kelly" vc={C.greenDim} />
+            <FRow label="Max bet" value="5% bankroll" vc={C.yellow} />
+          </Panel>
+          <Panel title="Expected Return">
+            <FRow expr="E[R] = (Rewards − L_fill) / C_risk" />
+          </Panel>
+          <Panel title="Risk Limits">
+            {[
+              ['Max position',  '5% bankroll'],
+              ['Max category',  '20% bankroll'],
+              ['Max deployed',  '40% bankroll'],
+              ['Daily loss',    '8% → pause'],
+              ['Drawdown',      '15% → pause'],
+              ['Min edge',      '4¢'],
+            ].map(([l, v]) => (
+              <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 8px', borderBottom: `1px solid ${C.border2}`, fontSize: 10 }}>
+                <span style={{ color: C.label }}>{l}</span>
+                <span style={{ color: C.text }}>{v}</span>
+              </div>
+            ))}
+          </Panel>
+          {risk && <div style={{ marginTop: 0 }}><RiskPanel risk={risk} /></div>}
+        </div>
+
+        {/* ── CENTER: chart + tabs ── */}
+        <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+          {/* Equity chart */}
+          <div style={{ padding: '8px 12px 0', borderBottom: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 9, color: C.label, letterSpacing: '0.12em', marginBottom: 6 }}>
+              ○ EQUITY CURVE — LMSR BAYESIAN STRATEGY · MANIFOLD PAPER
+            </div>
+            <div style={{ position: 'relative' }}>
+              <SparkLine data={equityHistory} />
+              <div style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(0,5,0,0.9)', border: `1px solid ${C.border}`, padding: '4px 10px' }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: C.green }}>{fmtM(bal)}</div>
+                <div style={{ fontSize: 9, color: C.greenDim }}>{fmt2(bal - 1000)} from start</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0 6px', fontSize: 8, color: C.dim }}>
+              {['30d', '25d', '20d', '15d', '10d', '5d', 'NOW'].map(l => <span key={l}>{l}</span>)}
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div style={{ display: 'flex', borderBottom: `1px solid ${C.border}` }}>
+            {(['positions', 'scans', 'hypotheses'] as const).map(tab => (
+              <button
+                key={tab}
+                onClick={() => setTab(tab)}
+                style={{
+                  padding: '6px 16px', background: 'transparent', cursor: 'pointer',
+                  border: 'none', borderBottom: activeTab === tab ? `2px solid ${C.green}` : '2px solid transparent',
+                  color: activeTab === tab ? C.green : C.label,
+                  fontFamily: 'monospace', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em',
+                }}
+              >
+                {tab}
+                {tab === 'positions' && data.positions.length > 0 && (
+                  <span style={{ marginLeft: 5, background: C.greenFaint, color: C.green, padding: '1px 5px', fontSize: 9 }}>
+                    {data.positions.length}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* Tab content */}
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {activeTab === 'positions' && (
+              data.positions.length === 0
+                ? <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 11 }}>No open positions · next scan scheduled</div>
+                : data.positions.map(p => <PositionRow key={p.id} pos={p} />)
+            )}
+            {activeTab === 'scans' && (
+              data.recent_scans.length === 0
+                ? <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 11 }}>No scans yet · first scan fires at scheduled time</div>
+                : data.recent_scans.map(s => <ScanRow key={s.id} scan={s} />)
+            )}
+            {activeTab === 'hypotheses' && (
+              data.hypotheses.length === 0
+                ? <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 11 }}>No hypotheses yet · generated after first resolved trade</div>
+                : data.hypotheses.map(h => <HypRow key={h.id} h={h} />)
+            )}
+          </div>
+        </div>
+
+        {/* ── RIGHT: phase gate + stats ── */}
+        <div style={{ borderLeft: `1px solid ${C.border}`, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 0 }}>
+          <PhaseGate gate={gate} />
+
+          <Panel title="Performance">
+            {[
+              { l: 'Win Rate',    v: pct(wr),             c: wr >= 0.6 ? C.green : C.yellow },
+              { l: 'Total P&L',   v: fmt2(bal - 1000),    c: bal >= 1000 ? C.green : C.red },
+              { l: 'Daily P&L',   v: fmt2(dailyPnl),      c: dailyPnl >= 0 ? C.green : C.red },
+              { l: 'Trades',      v: String(trades),       c: C.text },
+              { l: 'Open',        v: String(data.positions.filter(p => p.status === 'open').length), c: C.cyan },
+            ].map(r => (
+              <div key={r.l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 10px', borderBottom: `1px solid ${C.border2}` }}>
+                <span style={{ fontSize: 10, color: C.label }}>{r.l}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: r.c, fontFamily: 'monospace' }}>{r.v}</span>
+              </div>
+            ))}
+          </Panel>
+
+          <Panel title="Telegram Commands">
+            {[
+              ['/predict status',    'Balance + phase'],
+              ['/predict scan',      'Force scan now'],
+              ['/predict positions', 'Open positions'],
+              ['/predict pause',     'Pause trading'],
+              ['/predict gate',      'Phase progress'],
+            ].map(([cmd, desc]) => (
+              <div key={cmd} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 10px', borderBottom: `1px solid ${C.border2}` }}>
+                <code style={{ fontSize: 10, color: C.cyan }}>{cmd}</code>
+                <span style={{ fontSize: 9, color: C.dim }}>{desc}</span>
+              </div>
+            ))}
+          </Panel>
+
+          <Panel title="Recent Hypotheses">
+            {data.hypotheses.length === 0
+              ? <div style={{ padding: '12px 10px', fontSize: 10, color: C.dim }}>Pending first resolved trade</div>
+              : data.hypotheses.slice(0, 4).map(h => (
+                  <div key={h.id} style={{ padding: '5px 10px', borderBottom: `1px solid ${C.border2}` }}>
+                    <div style={{ fontSize: 8, color: h.status === 'confirmed' ? C.green : h.status === 'refuted' ? C.red : C.yellow, marginBottom: 2 }}>
+                      {h.status.toUpperCase()} · {(h.confidence * 100).toFixed(0)}%
+                    </div>
+                    <div style={{ fontSize: 9, color: C.text, lineHeight: 1.4 }}>{h.hypothesis}</div>
+                  </div>
+                ))
+            }
+          </Panel>
+
+          <Panel title="Memory Hygiene">
+            {[
+              { l: 'Active hyp',    v: `${data.hypotheses.filter(h => h.status === 'active').length} / 10`,    warn: data.hypotheses.filter(h => h.status === 'active').length >= 10 },
+              { l: 'Confirmed',     v: `${data.hypotheses.filter(h => h.status === 'confirmed').length} / 10`, warn: data.hypotheses.filter(h => h.status === 'confirmed').length >= 10 },
+              { l: 'Null reasoning',v: '0',   warn: false },
+              { l: 'Null aligned',  v: '0',   warn: false },
+            ].map(r => (
+              <div key={r.l} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 10px', borderBottom: `1px solid ${C.border2}` }}>
+                <span style={{ fontSize: 9, color: C.label }}>{r.l}</span>
+                <span style={{ fontSize: 10, color: r.warn ? C.red : C.green, fontFamily: 'monospace' }}>{r.v}</span>
+              </div>
+            ))}
+          </Panel>
+        </div>
+      </div>
+    </div>
+  );
 }

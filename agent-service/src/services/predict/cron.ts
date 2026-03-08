@@ -7,6 +7,8 @@
 
 import { scanManifold, analyzeMarkets, validateModelAccess } from './scan';
 import { executeTrade, reconcilePositions, getCurrentBankroll, getManifoldBalance } from './execute';
+import { scanPolymarket } from './scan-polymarket';
+import { executePolymarketTrade, getUSDCBalance } from './execute-polymarket';
 import { resetDailyRisk } from './risk-gate';
 import { runWeeklyReview } from './learn';
 import { query, queryOne } from '../../db';
@@ -115,9 +117,17 @@ export async function handleEquitySnapshot(taskId: number): Promise<string> {
  * Schedule: 6am MT (13:00 UTC)
  */
 export async function handleDailyRiskReset(): Promise<string> {
-  const bankroll = await getCurrentBankroll('manifold');
-  await resetDailyRisk('manifold', bankroll);
-  return `Daily risk reset. Starting bankroll: M$${bankroll.toFixed(0)}`;
+  const manifoldBankroll = await getCurrentBankroll('manifold');
+  await resetDailyRisk('manifold', manifoldBankroll);
+
+  let polyMsg = '';
+  if (config.POLYMARKET_API_KEY) {
+    const polyBankroll = await getPolyBankroll();
+    await resetDailyRisk('polymarket', polyBankroll);
+    polyMsg = ` | Polymarket: $${polyBankroll.toFixed(2)}`;
+  }
+
+  return `Daily risk reset. Manifold: M$${manifoldBankroll.toFixed(0)}${polyMsg}`;
 }
 
 /**
@@ -141,4 +151,67 @@ export async function handleResolutionCheck(taskId: number): Promise<string> {
 export async function handleHypothesisReview(taskId: number): Promise<string> {
   // This function throws on failure (loud, not swallowed)
   return await runWeeklyReview(taskId);
+}
+
+/**
+ * Polymarket scan: fetch 5-min crypto markets, analyze with LMSR+Bayes, execute trades
+ * Schedule: every 3 minutes during waking hours MT
+ */
+export async function handlePolymarketScan(taskId: number): Promise<string> {
+  if (!config.POLYMARKET_API_KEY) {
+    return 'POLYMARKET_API_KEY not configured. Scan skipped.';
+  }
+
+  // Fetch and filter markets
+  const candidates = await scanPolymarket();
+  if (candidates.length === 0) {
+    return 'No Polymarket candidates found.';
+  }
+
+  // Get current bankroll
+  const bankroll = await getPolyBankroll();
+
+  // Execute top opportunities
+  let tradesOpened = 0;
+  let tradesBlocked = 0;
+  let dryRunCount = 0;
+
+  for (const market of candidates) {
+    if (market.edge < 0.04) continue;
+    if (market.betAmount < 0.50) continue;
+
+    const result = await executePolymarketTrade(market, bankroll);
+    if (result.success) {
+      if (result.dryRun) {
+        dryRunCount++;
+      } else {
+        tradesOpened++;
+      }
+      if (tradesOpened >= 2) break; // Max 2 trades per 3-min scan cycle
+    } else if (result.riskRejection) {
+      tradesBlocked++;
+      if (result.riskRejection === 'trading_not_paused') break;
+    }
+  }
+
+  const mode = config.PREDICT_POLY_DRY_RUN ? 'DRY RUN' : 'LIVE';
+  return `[${mode}] Polymarket: ${candidates.length} markets, ${tradesOpened} trades, ${dryRunCount} dry-run, ${tradesBlocked} blocked. Bankroll: $${bankroll.toFixed(2)}`;
+}
+
+async function getPolyBankroll(): Promise<number> {
+  // Try daily risk state first
+  const todayStr = new Date().toISOString().split('T')[0];
+  const risk = await queryOne<any>(
+    `SELECT current_bankroll FROM daily_risk_state WHERE date = $1 AND platform = 'polymarket'`,
+    [todayStr]
+  );
+
+  if (risk) return parseFloat(risk.current_bankroll);
+
+  // Try USDC balance
+  const balance = await getUSDCBalance();
+  if (balance !== null) return balance;
+
+  // Default
+  return config.PREDICT_POLY_STARTING_BANKROLL;
 }
