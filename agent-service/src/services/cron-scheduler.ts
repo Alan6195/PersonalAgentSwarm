@@ -25,6 +25,7 @@ import { checkBudget } from './cost-guardrails';
 import { runDailyMaintenance } from './memory-decay';
 import { processDueSnapshots, recomputeContentPerformance } from './analytics-ingestion';
 import { warmBriefCache } from './analytics-context';
+import { runWeeklyReview } from './hypothesis-engine';
 
 interface CronJob {
   id: number;
@@ -381,6 +382,130 @@ async function runJob(job: CronJob): Promise<void> {
       });
 
       console.log(`[Cron] Performance Brief completed (${durationMs}ms): ${summary}`);
+      return;
+    }
+
+    // Hypothesis Review: weekly Claude-powered hypothesis evaluation
+    if (job.name === 'Hypothesis Review') {
+      console.log('[Cron] Running Hypothesis Review (weekly Claude analysis)');
+      const reviewSummary = await runWeeklyReview(task.id);
+      const durationMs = Date.now() - startTime;
+
+      await query(`UPDATE cron_runs SET status = 'success', duration_ms = $1, output_summary = $2, completed_at = NOW() WHERE id = $3`, [durationMs, reviewSummary.substring(0, 2000), run.id]);
+      const nextRun = calculateNextRun(job.schedule);
+      await query(`UPDATE cron_jobs SET last_status = 'success', last_run_at = NOW(), next_run_at = $1, last_duration_ms = $2, run_count = run_count + 1, updated_at = NOW() WHERE id = $3`, [nextRun, durationMs, job.id]);
+      await taskManager.completeTask(task.id, { content: reviewSummary, tokensUsed: 0, costCents: 0, durationMs });
+
+      await activityLogger.log({
+        event_type: 'cron_completed',
+        agent_id: job.agent_id,
+        task_id: task.id,
+        channel: 'cron',
+        summary: `Hypothesis Review: ${reviewSummary.substring(0, 200)}`,
+      });
+
+      // Notify via Telegram
+      if (telegramNotify) {
+        try { await telegramNotify(reviewSummary); } catch { /* non-critical */ }
+      }
+
+      console.log(`[Cron] Hypothesis Review completed (${durationMs}ms)`);
+      return;
+    }
+
+    // Predict Manifold Scan: scan markets, analyze, trade
+    if (job.name === 'Predict Manifold Scan') {
+      console.log('[Cron] Running Predict Manifold Scan');
+      const { handleManifoldScan } = await import('./predict/cron');
+      const scanSummary = await handleManifoldScan(task.id);
+      const durationMs = Date.now() - startTime;
+
+      await query(`UPDATE cron_runs SET status = 'success', duration_ms = $1, output_summary = $2, completed_at = NOW() WHERE id = $3`, [durationMs, scanSummary.substring(0, 2000), run.id]);
+      const nextRun = calculateNextRun(job.schedule);
+      await query(`UPDATE cron_jobs SET last_status = 'success', last_run_at = NOW(), next_run_at = $1, last_duration_ms = $2, run_count = run_count + 1, updated_at = NOW() WHERE id = $3`, [nextRun, durationMs, job.id]);
+      await taskManager.completeTask(task.id, { content: scanSummary, tokensUsed: 0, costCents: 0, durationMs });
+
+      await activityLogger.log({ event_type: 'cron_completed', agent_id: job.agent_id, task_id: task.id, channel: 'cron', summary: `Predict Scan: ${scanSummary.substring(0, 200)}` });
+
+      if (telegramNotify) {
+        try { await telegramNotify(`*Predict Scan*\n\n${scanSummary}`); } catch { /* non-critical */ }
+      }
+
+      console.log(`[Cron] Predict Manifold Scan completed (${durationMs}ms): ${scanSummary}`);
+      return;
+    }
+
+    // Predict Equity Snapshot: record balance and stats
+    if (job.name === 'Predict Equity Snapshot') {
+      console.log('[Cron] Running Predict Equity Snapshot');
+      const { handleEquitySnapshot } = await import('./predict/cron');
+      const snapSummary = await handleEquitySnapshot(task.id);
+      const durationMs = Date.now() - startTime;
+
+      await query(`UPDATE cron_runs SET status = 'success', duration_ms = $1, output_summary = $2, completed_at = NOW() WHERE id = $3`, [durationMs, snapSummary, run.id]);
+      const nextRun = calculateNextRun(job.schedule);
+      await query(`UPDATE cron_jobs SET last_status = 'success', last_run_at = NOW(), next_run_at = $1, last_duration_ms = $2, run_count = run_count + 1, updated_at = NOW() WHERE id = $3`, [nextRun, durationMs, job.id]);
+      await taskManager.completeTask(task.id, { content: snapSummary, tokensUsed: 0, costCents: 0, durationMs });
+
+      console.log(`[Cron] Predict Equity Snapshot completed (${durationMs}ms): ${snapSummary}`);
+      return;
+    }
+
+    // Predict Daily Risk Reset
+    if (job.name === 'Predict Daily Risk Reset') {
+      console.log('[Cron] Running Predict Daily Risk Reset');
+      const { handleDailyRiskReset } = await import('./predict/cron');
+      const resetSummary = await handleDailyRiskReset();
+      const durationMs = Date.now() - startTime;
+
+      await query(`UPDATE cron_runs SET status = 'success', duration_ms = $1, output_summary = $2, completed_at = NOW() WHERE id = $3`, [durationMs, resetSummary, run.id]);
+      const nextRun = calculateNextRun(job.schedule);
+      await query(`UPDATE cron_jobs SET last_status = 'success', last_run_at = NOW(), next_run_at = $1, last_duration_ms = $2, run_count = run_count + 1, updated_at = NOW() WHERE id = $3`, [nextRun, durationMs, job.id]);
+      await taskManager.completeTask(task.id, { content: resetSummary, tokensUsed: 0, costCents: 0, durationMs });
+
+      console.log(`[Cron] Predict Daily Risk Reset completed (${durationMs}ms): ${resetSummary}`);
+      return;
+    }
+
+    // Predict Resolution Check: poll open positions for resolution
+    if (job.name === 'Predict Resolution Check') {
+      console.log('[Cron] Running Predict Resolution Check');
+      const { handleResolutionCheck } = await import('./predict/cron');
+      const resSummary = await handleResolutionCheck(task.id);
+      const durationMs = Date.now() - startTime;
+
+      await query(`UPDATE cron_runs SET status = 'success', duration_ms = $1, output_summary = $2, completed_at = NOW() WHERE id = $3`, [durationMs, resSummary, run.id]);
+      const nextRun = calculateNextRun(job.schedule);
+      await query(`UPDATE cron_jobs SET last_status = 'success', last_run_at = NOW(), next_run_at = $1, last_duration_ms = $2, run_count = run_count + 1, updated_at = NOW() WHERE id = $3`, [nextRun, durationMs, job.id]);
+      await taskManager.completeTask(task.id, { content: resSummary, tokensUsed: 0, costCents: 0, durationMs });
+
+      if (telegramNotify && resSummary.includes('resolved')) {
+        try { await telegramNotify(`*Predict Resolution*\n\n${resSummary}`); } catch { /* non-critical */ }
+      }
+
+      console.log(`[Cron] Predict Resolution Check completed (${durationMs}ms): ${resSummary}`);
+      return;
+    }
+
+    // Predict Hypothesis Review: weekly Claude-powered learning
+    if (job.name === 'Predict Hypothesis Review') {
+      console.log('[Cron] Running Predict Hypothesis Review (weekly Claude analysis)');
+      const { handleHypothesisReview } = await import('./predict/cron');
+      const reviewSummary = await handleHypothesisReview(task.id);
+      const durationMs = Date.now() - startTime;
+
+      await query(`UPDATE cron_runs SET status = 'success', duration_ms = $1, output_summary = $2, completed_at = NOW() WHERE id = $3`, [durationMs, reviewSummary.substring(0, 2000), run.id]);
+      const nextRun = calculateNextRun(job.schedule);
+      await query(`UPDATE cron_jobs SET last_status = 'success', last_run_at = NOW(), next_run_at = $1, last_duration_ms = $2, run_count = run_count + 1, updated_at = NOW() WHERE id = $3`, [nextRun, durationMs, job.id]);
+      await taskManager.completeTask(task.id, { content: reviewSummary, tokensUsed: 0, costCents: 0, durationMs });
+
+      await activityLogger.log({ event_type: 'cron_completed', agent_id: job.agent_id, task_id: task.id, channel: 'cron', summary: `Predict Hypothesis Review: ${reviewSummary.substring(0, 200)}` });
+
+      if (telegramNotify) {
+        try { await telegramNotify(`*Predict Hypothesis Review*\n\n${reviewSummary}`); } catch { /* non-critical */ }
+      }
+
+      console.log(`[Cron] Predict Hypothesis Review completed (${durationMs}ms)`);
       return;
     }
 

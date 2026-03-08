@@ -16,6 +16,7 @@ import {
   Trophy,
   GitBranch,
   Plane,
+  TrendingUp,
 } from "lucide-react";
 
 const navItems = [
@@ -28,6 +29,7 @@ const navItems = [
   { href: "/dev-queue", label: "Dev Queue", icon: GitBranch },
   { href: "/wedding", label: "Wedding", icon: Heart },
   { href: "/travel", label: "Honeymoon", icon: Plane },
+  { href: "/predict", label: "Predict", icon: TrendingUp },
 ];
 
 const agents = [

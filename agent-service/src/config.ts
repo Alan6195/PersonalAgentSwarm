@@ -28,6 +28,26 @@ export const config = {
   // Runway (video generation via Gen 4.5)
   RUNWAY_API_KEY: process.env.RUNWAY_API_KEY || '',
 
+  // Predict Agent (prediction market trading)
+  MANIFOLD_API_KEY: process.env.MANIFOLD_API_KEY || '',
+  POLYMARKET_API_KEY: process.env.POLYMARKET_API_KEY || '',
+  POLYMARKET_WALLET_KEY: process.env.POLYMARKET_WALLET_KEY || '',
+  POLYMARKET_WALLET_ADDRESS: process.env.POLYMARKET_WALLET_ADDRESS || '',
+  POLYGON_RPC_URL: process.env.POLYGON_RPC_URL || '',
+  USDC_CONTRACT: process.env.USDC_CONTRACT || '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
+  PREDICT_PHASE: parseInt(process.env.PREDICT_PHASE || '1', 10),
+
+  // Predict: model strings (no inline model strings anywhere else)
+  PREDICT_SCAN_MODEL: 'claude-sonnet-4-20250514',
+  PREDICT_REVIEWER_MODEL: 'claude-haiku-4-5-20251001',
+
+  // Predict: scan filter thresholds (env-driven, tunable without rebuild)
+  PREDICT_SCAN_MIN_TRADERS: parseInt(process.env.PREDICT_SCAN_MIN_TRADERS || '10', 10),
+  PREDICT_SCAN_MIN_PRICE: parseFloat(process.env.PREDICT_SCAN_MIN_PRICE || '0.10'),
+  PREDICT_SCAN_MAX_PRICE: parseFloat(process.env.PREDICT_SCAN_MAX_PRICE || '0.90'),
+  PREDICT_SCAN_MIN_DAYS: parseInt(process.env.PREDICT_SCAN_MIN_DAYS || '1', 10),
+  PREDICT_SCAN_MAX_DAYS: parseInt(process.env.PREDICT_SCAN_MAX_DAYS || '60', 10),
+
   // Unsplash (stock photos for authentic visual content)
   UNSPLASH_ACCESS_KEY: process.env.UNSPLASH_ACCESS_KEY || '',
 
@@ -71,6 +91,7 @@ export const config = {
     'claude-sonnet-4-20250514': { input: 300, output: 1500 },
     'claude-opus-4-20250514': { input: 1500, output: 7500 },
     'claude-haiku-3-20240307': { input: 25, output: 125 },
+    'claude-haiku-4-5-20251001': { input: 80, output: 400 },
   } as Record<string, { input: number; output: number }>,
 } as const;
 
@@ -144,6 +165,15 @@ export function validateConfig(): void {
     console.log('[Config] Google Calendar credentials found; calendar features enabled.');
   } else {
     console.log('[Config] Google Calendar credentials not set; calendar features disabled.');
+  }
+
+  // Predict Agent
+  if (config.MANIFOLD_API_KEY) {
+    console.log(`[Config] Manifold API key found; predict agent Phase ${config.PREDICT_PHASE} enabled.`);
+    console.log(`[Config] Predict scan: model=${config.PREDICT_SCAN_MODEL}, reviewer=${config.PREDICT_REVIEWER_MODEL}`);
+    console.log(`[Config] Predict filters: traders>=${config.PREDICT_SCAN_MIN_TRADERS}, price=${config.PREDICT_SCAN_MIN_PRICE}-${config.PREDICT_SCAN_MAX_PRICE}, days=${config.PREDICT_SCAN_MIN_DAYS}-${config.PREDICT_SCAN_MAX_DAYS}`);
+  } else {
+    console.log('[Config] MANIFOLD_API_KEY not set; predict agent disabled.');
   }
 
   console.log(`[Config] Cost guardrails: daily=$${(config.DAILY_BUDGET_LIMIT_CENTS / 100).toFixed(2)}, per-agent=$${(config.AGENT_DAILY_LIMIT_CENTS / 100).toFixed(2)}`);

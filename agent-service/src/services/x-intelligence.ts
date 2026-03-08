@@ -285,6 +285,13 @@ export async function runIntelligenceScan(
   // Generate trending summary
   const trendingSummary = generateTrendingSummary(allInsights);
 
+  // Bridge: write relevant signals to shared_signals for predict agent
+  try {
+    await writeSharedSignals(trendingSummary, allInsights);
+  } catch (err) {
+    console.warn('[XIntelligence] Failed to write shared signals:', (err as Error).message);
+  }
+
   return {
     query: topics.join(', '),
     timestamp: new Date().toISOString(),
@@ -573,6 +580,93 @@ export function formatForResearch(report: XIntelligenceReport): string {
   return lines.join('\n');
 }
 
+// ---------------------------------------------------------------------------
+// Topic Velocity
+// ---------------------------------------------------------------------------
+
+/**
+ * Compare last 3 x_trend_snapshots to compute per-theme velocity.
+ * Returns a markdown block showing which topics are surging, cooling, etc.
+ */
+export async function computeTopicVelocity(): Promise<string> {
+  try {
+    const snapshots = await dbQuery<{
+      scan_date: string;
+      top_themes: string | [string, number][];
+      created_at: string;
+    }>(
+      `SELECT scan_date, top_themes, created_at FROM x_trend_snapshots
+       ORDER BY created_at DESC LIMIT 3`
+    );
+
+    if (snapshots.length < 2) return '';
+
+    // Parse theme maps from each snapshot
+    const themeMaps: Map<string, number>[] = snapshots.map(s => {
+      const themes: [string, number][] = typeof s.top_themes === 'string'
+        ? JSON.parse(s.top_themes)
+        : s.top_themes;
+      const map = new Map<string, number>();
+      for (const [name, count] of themes) {
+        map.set(name, count);
+      }
+      return map;
+    });
+
+    // Collect all theme names
+    const allThemes = new Set<string>();
+    for (const m of themeMaps) {
+      for (const key of m.keys()) allThemes.add(key);
+    }
+
+    if (allThemes.size === 0) return '';
+
+    const lines: string[] = ['### Topic Velocity (last 3 scans)\n'];
+
+    for (const theme of allThemes) {
+      const counts = themeMaps.map(m => m.get(theme) || 0);
+      // counts[0] is most recent, counts[1] is previous, counts[2] is oldest
+
+      const current = counts[0];
+      const previous = counts[1];
+      const oldest = counts.length > 2 ? counts[2] : previous;
+
+      // Determine label
+      let label: string;
+      let emoji: string;
+
+      if (previous === 0 && current > 0) {
+        label = 'NEW';
+        emoji = '';
+      } else if (previous === 0) {
+        label = 'GONE';
+        emoji = '';
+        continue; // Skip themes with no recent mentions
+      } else {
+        const delta = ((current - previous) / previous) * 100;
+        if (delta >= 100) { label = 'SURGING'; emoji = ''; }
+        else if (delta >= 30) { label = 'RISING'; emoji = ''; }
+        else if (delta > -15) { label = 'STEADY'; emoji = ''; }
+        else if (delta > -50) { label = 'COOLING'; emoji = ''; }
+        else { label = 'DECLINING'; emoji = ''; }
+
+        const sign = delta >= 0 ? '+' : '';
+        const trend = `${oldest} -> ${previous} -> ${current} (${sign}${Math.round(delta)}%)`;
+        lines.push(`- ${theme}: ${label} ${emoji} ${trend}`);
+        continue;
+      }
+
+      lines.push(`- ${theme}: ${label} ${emoji} (${current} mentions)`);
+    }
+
+    if (lines.length <= 1) return '';
+    return lines.join('\n');
+  } catch (err) {
+    console.warn('[XIntelligence] computeTopicVelocity failed:', (err as Error).message);
+    return '';
+  }
+}
+
 /**
  * Format a targeted search result (for [ACTION:SEARCH] with better output)
  */
@@ -598,4 +692,76 @@ export function formatSearchResults(tweets: TweetV2[], searchQuery: string): str
   }
 
   return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Shared Signals Bridge (for predict agent)
+// ---------------------------------------------------------------------------
+
+const MARKET_KEYWORDS: Record<string, RegExp> = {
+  crypto: /\b(bitcoin|btc|ethereum|eth|solana|sol|crypto|defi|web3)\b/i,
+  ai_tech: /\b(openai|gpt|claude|anthropic|google ai|gemini|llm|foundation model)\b/i,
+  economics: /\b(fed|interest rate|inflation|gdp|unemployment|recession|tariff)\b/i,
+  politics: /\b(election|congress|senate|president|supreme court|policy|regulation)\b/i,
+};
+
+async function writeSharedSignals(
+  trendingSummary: string[],
+  insights: TweetInsight[]
+): Promise<void> {
+  const marketRelevant = insights.filter((insight) => {
+    const text = insight.text.toLowerCase();
+    return Object.values(MARKET_KEYWORDS).some((rx) => rx.test(text));
+  });
+
+  if (marketRelevant.length === 0) return;
+
+  const topicSignals = new Map<string, { count: number; totalSentiment: number; topTweet: string }>();
+
+  for (const insight of marketRelevant) {
+    const text = insight.text.toLowerCase();
+    for (const [topic, rx] of Object.entries(MARKET_KEYWORDS)) {
+      if (!rx.test(text)) continue;
+
+      const existing = topicSignals.get(topic) || { count: 0, totalSentiment: 0, topTweet: '' };
+      existing.count++;
+      const posWords = (text.match(/\b(bullish|surge|moon|rally|growth|positive|up|gain|win|success)\b/g) || []).length;
+      const negWords = (text.match(/\b(bearish|crash|dump|decline|negative|down|loss|fail|risk|concern)\b/g) || []).length;
+      existing.totalSentiment += posWords - negWords;
+      if (!existing.topTweet || insight.relevanceScore > 5) {
+        existing.topTweet = insight.text.substring(0, 200);
+      }
+      topicSignals.set(topic, existing);
+    }
+  }
+
+  let written = 0;
+  for (const [topic, signal] of topicSignals) {
+    if (written >= 5) break;
+
+    const direction = signal.totalSentiment > 0 ? 'bullish' : signal.totalSentiment < 0 ? 'bearish' : 'neutral';
+    const strength = Math.min(signal.count / 10, 1.0);
+
+    try {
+      await dbQuery(
+        `INSERT INTO shared_signals (source_agent, signal_type, topic, direction, strength, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          'social-media',
+          'velocity',
+          topic,
+          direction,
+          strength,
+          JSON.stringify({ tweet_count: signal.count, sentiment_score: signal.totalSentiment, sample: signal.topTweet }),
+        ]
+      );
+      written++;
+    } catch {
+      // shared_signals table may not exist yet; non-critical
+    }
+  }
+
+  if (written > 0) {
+    console.log(`[XIntelligence] Wrote ${written} shared signals for predict agent`);
+  }
 }

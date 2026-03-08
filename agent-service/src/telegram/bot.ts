@@ -164,6 +164,12 @@ export function startBot(): TelegramBot {
       await handleShipCommand(chatId, text, bot);
       return;
     }
+    if (text.startsWith('/predict')) {
+      const { handlePredictCommand } = await import('../services/predict/telegram');
+      const sub = text.replace(/^\/predict\s*/i, '').trim();
+      await handlePredictCommand(chatId, sub, bot);
+      return;
+    }
 
     // Periodic typing indicator (refreshes every 4s for long-running tasks)
     const typingInterval = setInterval(async () => {
