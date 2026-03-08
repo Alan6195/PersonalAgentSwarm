@@ -63,7 +63,7 @@ export async function scanManifold(): Promise<MarketCandidate[]> {
 
   console.log(`[Scan] Fetching Manifold markets (minTraders=${minTraders}, price=${minPrice}-${maxPrice}, days=${minDays}-${maxDays})`);
 
-  const res = await fetch(`${MANIFOLD_BASE}/search-markets?term=&sort=liquidity-score&limit=100&filter=open`);
+  const res = await fetch(`${MANIFOLD_BASE}/search-markets?term=&sort=score&limit=100&filter=open`);
   if (!res.ok) {
     throw new Error(`Manifold API error: ${res.status} ${res.statusText}`);
   }
