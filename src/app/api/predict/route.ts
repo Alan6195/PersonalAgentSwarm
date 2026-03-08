@@ -25,101 +25,104 @@ export async function GET(request: Request) {
   }
 }
 
-async function getDashboard() {
-  // Risk state (latest daily risk)
-  const riskRows = await query(
-    `SELECT * FROM daily_risk_state
-     WHERE platform = 'manifold'
-     ORDER BY date DESC LIMIT 1`
-  );
-
-  // Equity history (last 30 days of snapshots, downsampled to 1 per hour)
+// Helper to get platform stats (bankroll, winRate, trades, pnl, etc.)
+async function getPlatformStats(platform: string) {
+  // Latest equity snapshot for bankroll
   const equityRows = await query(
-    `SELECT DISTINCT ON (date_trunc('hour', snapshot_at))
-       total_equity, bankroll, unrealized_pnl, positions_open, win_rate, total_trades, snapshot_at
-     FROM equity_snapshots
-     WHERE platform = 'manifold'
-     ORDER BY date_trunc('hour', snapshot_at) DESC, snapshot_at DESC
-     LIMIT 720`
+    `SELECT bankroll as balance FROM equity_snapshots
+     WHERE platform = $1
+     ORDER BY snapshot_at DESC LIMIT 1`,
+    [platform]
   );
+  const bankroll = equityRows.length > 0 ? parseFloat((equityRows[0] as any).balance) || 0 : (platform === 'manifold' ? 1000 : 50);
 
-  // Open positions (include all statuses for display, add pnl and platform)
-  const positionRows = await query(
-    `SELECT id, 'manifold' as platform, question as market_question, direction,
-            p_market, p_model, edge, bet_size, intel_aligned, status, pnl, opened_at
-     FROM market_positions
-     WHERE platform = 'manifold' AND status = 'open'
-     ORDER BY opened_at DESC
-     LIMIT 20`
+  // Bankroll 24h ago for change calculation
+  const equityRows24h = await query(
+    `SELECT bankroll as balance FROM equity_snapshots
+     WHERE platform = $1 AND snapshot_at <= NOW() - INTERVAL '24 hours'
+     ORDER BY snapshot_at DESC LIMIT 1`,
+    [platform]
   );
-
-  // Recent scans (add reasoning, platform, rename fields)
-  const scanRows = await query(
-    `SELECT id, 'manifold' as platform, question as market_question, category,
-            current_prob, claude_prob, edge, kelly_fraction, claude_reasoning as reasoning,
-            scanned_at as created_at
-     FROM market_scans
-     WHERE platform = 'manifold'
-     ORDER BY scanned_at DESC
-     LIMIT 20`
-  );
+  const bankroll24h = equityRows24h.length > 0 ? parseFloat((equityRows24h[0] as any).balance) || bankroll : bankroll;
+  const bankrollChange = bankroll - bankroll24h;
 
   // Trade stats (exclude scanner bug positions)
-  const stats = await query(
+  const statsRows = await query(
     `SELECT
        COUNT(*) FILTER (WHERE status IN ('closed_win', 'closed_loss')) as total_trades,
        COUNT(*) FILTER (WHERE status = 'closed_win') as wins,
        COUNT(*) FILTER (WHERE status = 'closed_loss') as losses,
        COALESCE(SUM(pnl) FILTER (WHERE status IN ('closed_win', 'closed_loss')), 0) as total_pnl,
        COUNT(*) FILTER (WHERE status = 'open') as open_positions,
-       COALESCE(SUM(bet_size) FILTER (WHERE status = 'open'), 0) as deployed
+       COALESCE(SUM(pnl) FILTER (WHERE status IN ('closed_win', 'closed_loss') AND opened_at >= CURRENT_DATE), 0) as daily_pnl
      FROM market_positions
+     WHERE platform = $1
+       AND (notes IS NULL OR notes NOT LIKE 'scanner bug%')`,
+    [platform]
+  );
+  const s = (statsRows[0] || {}) as Record<string, any>;
+  const totalTrades = parseInt(s.total_trades || "0");
+  const wins = parseInt(s.wins || "0");
+  const losses = parseInt(s.losses || "0");
+  const winRate = totalTrades > 0 ? wins / totalTrades : 0;
+  const totalPnl = parseFloat(s.total_pnl || "0");
+  const openPositions = parseInt(s.open_positions || "0");
+  const dailyPnl = parseFloat(s.daily_pnl || "0");
+
+  return { bankroll, bankrollChange, winRate, trades: totalTrades, wins, losses, openPositions, dailyPnl, totalPnl };
+}
+
+async function getDashboard() {
+  // Get per-platform stats
+  const manifold = await getPlatformStats('manifold');
+  const polymarket = await getPlatformStats('polymarket');
+
+  // Polymarket dry run flag
+  const polyDryRun = process.env.PREDICT_POLY_DRY_RUN === 'true';
+
+  // Risk state (latest daily risk for manifold)
+  const riskRows = await query(
+    `SELECT * FROM daily_risk_state
      WHERE platform = 'manifold'
-       AND (notes IS NULL OR notes NOT LIKE 'scanner bug%')`
+     ORDER BY date DESC LIMIT 1`
   );
-
-  // Phase gate
-  const phase = parseInt(process.env.PREDICT_PHASE || "1");
-
-  // Hypotheses summary (include category)
-  const hypothesisRows = await query(
-    `SELECT id, hypothesis, category, status, confidence, win_count, loss_count
-     FROM predict_hypotheses
-     WHERE status IN ('active', 'confirmed', 'refuted')
-     ORDER BY status DESC, confidence DESC
-     LIMIT 10`
-  );
-
-  // Parse risk state into numbers
   const riskRaw = riskRows[0] as Record<string, any> | undefined;
-  const riskState = riskRaw
-    ? {
-        current_bankroll: parseFloat(riskRaw.current_bankroll) || 1000,
-        peak_bankroll: parseFloat(riskRaw.peak_bankroll) || 1000,
-        daily_pnl: parseFloat(riskRaw.daily_pnl) || 0,
-        daily_loss: parseFloat(riskRaw.daily_loss) || 0,
-        current_exposure: parseFloat(riskRaw.current_exposure) || 0,
-        trading_paused: riskRaw.trading_paused === true,
-        pause_reason: riskRaw.pause_reason || null,
-        current_drawdown: parseFloat(riskRaw.current_drawdown) || 0,
-      }
-    : null;
+  const currentBankroll = riskRaw ? parseFloat(riskRaw.current_bankroll) || manifold.bankroll : manifold.bankroll;
+  const peakBankroll = riskRaw ? parseFloat(riskRaw.peak_bankroll) || currentBankroll : currentBankroll;
+  const exposure = riskRaw ? (parseFloat(riskRaw.current_exposure) || 0) / Math.max(currentBankroll, 1) : 0;
+  const dailyLoss = riskRaw ? Math.abs(parseFloat(riskRaw.daily_loss) || 0) / Math.max(currentBankroll, 1) : 0;
+  const drawdown = riskRaw ? parseFloat(riskRaw.current_drawdown) || 0 : 0;
+  const paused = riskRaw ? riskRaw.trading_paused === true : false;
 
-  // Parse equity history into numbers (reverse to chronological order)
-  const equityHistory = equityRows.reverse().map((row: any) => ({
-    bankroll: parseFloat(row.bankroll) || 0,
-    unrealized_pnl: parseFloat(row.unrealized_pnl) || 0,
-    total_equity: parseFloat(row.total_equity) || 0,
-    win_rate: parseFloat(row.win_rate) || 0,
-    total_trades: parseInt(row.total_trades) || 0,
-    snapshot_at: row.snapshot_at,
+  const riskState = {
+    exposure,
+    dailyLoss,
+    drawdown,
+    paused,
+  };
+
+  // Equity history for sparkline (column is 'bankroll' not 'balance')
+  const equityRows = await query(
+    `SELECT snapshot_at as timestamp, bankroll as balance
+     FROM equity_snapshots
+     WHERE platform = 'manifold'
+     ORDER BY snapshot_at ASC
+     LIMIT 100`
+  );
+  const equityHistory = equityRows.map((row: any) => ({
+    timestamp: row.timestamp,
+    balance: parseFloat(row.balance) || 0,
   }));
 
-  // Latest equity snapshot as "equity"
-  const latestEquity =
-    equityHistory.length > 0 ? equityHistory[equityHistory.length - 1] : null;
-
-  // Parse positions into numbers
+  // Open positions (both platforms)
+  const positionRows = await query(
+    `SELECT id, platform, question as market_question, direction,
+            p_market, p_model, edge, bet_size, intel_aligned, status, pnl, opened_at
+     FROM market_positions
+     WHERE status = 'open'
+     ORDER BY opened_at DESC
+     LIMIT 20`
+  );
   const positions = positionRows.map((row: any) => ({
     id: row.id,
     platform: row.platform,
@@ -135,7 +138,15 @@ async function getDashboard() {
     opened_at: row.opened_at,
   }));
 
-  // Parse scans into numbers
+  // Recent scans (both platforms)
+  const scanRows = await query(
+    `SELECT id, platform, question as market_question, category,
+            current_prob, claude_prob, edge, kelly_fraction, claude_reasoning as reasoning,
+            scanned_at as created_at
+     FROM market_scans
+     ORDER BY scanned_at DESC
+     LIMIT 20`
+  );
   const recentScans = scanRows.map((row: any) => ({
     id: row.id,
     market_question: row.market_question,
@@ -148,7 +159,14 @@ async function getDashboard() {
     created_at: row.created_at,
   }));
 
-  // Parse hypotheses
+  // Hypotheses
+  const hypothesisRows = await query(
+    `SELECT id, hypothesis, category, status, confidence, win_count, loss_count, created_at
+     FROM predict_hypotheses
+     WHERE status IN ('active', 'confirmed', 'refuted')
+     ORDER BY status DESC, confidence DESC
+     LIMIT 10`
+  );
   const hypotheses = hypothesisRows.map((row: any) => ({
     id: row.id,
     hypothesis: row.hypothesis,
@@ -157,40 +175,122 @@ async function getDashboard() {
     confidence: parseFloat(row.confidence) || 0,
     win_count: parseInt(row.win_count) || 0,
     loss_count: parseInt(row.loss_count) || 0,
+    created_at: row.created_at,
   }));
 
-  // Trade stats for phase gate
-  const tradeStats = (stats[0] || {}) as Record<string, any>;
-  const totalTrades = parseInt(tradeStats.total_trades || "0");
-  const wins = parseInt(tradeStats.wins || "0");
-  const winRate = totalTrades > 0 ? wins / totalTrades : 0;
+  // Phase gate with Sharpe calculation
+  const sharpe = await computeSharpe('manifold');
 
-  // Phase gate (flat structure)
-  // Gate lowered from 30/60%/1.5 to 15/55%/1.2 because:
-  // 1. Polymarket 5-min markets are now running in parallel as primary track
-  // 2. Manifold is validation only, not the main model
-  // 3. External validation exists from LMSR engine data
+  const phase = parseInt(process.env.PREDICT_PHASE || "1");
+  const tradesTarget = 15;
+  const winRateTarget = 0.55;
+  const sharpeTarget = 1.2;
+  const phase2Unlocked = manifold.trades >= tradesTarget && manifold.winRate >= winRateTarget && sharpe >= sharpeTarget;
+
   const phaseGate = {
-    phase: phase === 1 ? "manifold" : "polymarket",
-    trades: totalTrades,
-    trades_target: 15,
-    win_rate: winRate,
-    win_rate_target: 0.55,
-    sharpe: 0, // computed from equity history client-side
-    sharpe_target: 1.2,
-    ready:
-      totalTrades >= 15 && winRate >= 0.55, // sharpe check deferred
+    trades: manifold.trades,
+    tradesTarget,
+    winRate: manifold.winRate,
+    winRateTarget,
+    sharpe,
+    sharpeTarget,
+    phase2Unlocked,
   };
 
+  // Performance stats
+  const activeDaysRows = await query(
+    `SELECT COUNT(DISTINCT DATE(snapshot_at)) as days
+     FROM equity_snapshots WHERE platform = 'manifold'`
+  );
+  const activeDays = parseInt((activeDaysRows[0] as any)?.days || "0");
+
+  const confirmedCount = hypotheses.filter(h => h.status === 'confirmed').length;
+
+  // Max drawdown from equity snapshots
+  const maxDdRows = await query(
+    `SELECT bankroll as balance FROM equity_snapshots
+     WHERE platform = 'manifold' ORDER BY snapshot_at ASC`
+  );
+  let maxDrawdown = 0;
+  let peak = 0;
+  for (const row of maxDdRows) {
+    const bal = parseFloat((row as any).balance) || 0;
+    if (bal > peak) peak = bal;
+    const dd = peak > 0 ? (peak - bal) / peak : 0;
+    if (dd > maxDrawdown) maxDrawdown = dd;
+  }
+
+  // Win streak
+  const streakRows = await query(
+    `SELECT status FROM market_positions
+     WHERE platform = 'manifold'
+       AND status IN ('closed_win', 'closed_loss')
+       AND (notes IS NULL OR notes NOT LIKE 'scanner bug%')
+     ORDER BY closed_at DESC`
+  );
+  let winStreak = 0;
+  for (const row of streakRows) {
+    if ((row as any).status === 'closed_win') winStreak++;
+    else break;
+  }
+
   return NextResponse.json({
-    equity: latestEquity,
-    equity_history: equityHistory,
+    manifold: {
+      bankroll: manifold.bankroll,
+      bankrollChange: manifold.bankrollChange,
+      winRate: manifold.winRate,
+      trades: manifold.trades,
+      wins: manifold.wins,
+      losses: manifold.losses,
+      openPositions: manifold.openPositions,
+      dailyPnl: manifold.dailyPnl,
+      totalPnl: manifold.totalPnl,
+    },
+    polymarket: {
+      bankroll: polymarket.bankroll,
+      bankrollChange: polymarket.bankrollChange,
+      winRate: polymarket.winRate,
+      trades: polymarket.trades,
+      wins: polymarket.wins,
+      losses: polymarket.losses,
+      openPositions: polymarket.openPositions,
+      dailyPnl: polymarket.dailyPnl,
+      totalPnl: polymarket.totalPnl,
+      dryRun: polyDryRun,
+    },
+    phaseGate,
+    riskState,
     positions,
-    recent_scans: recentScans,
-    risk_state: riskState,
-    phase_gate: phaseGate,
+    recentScans,
     hypotheses,
+    equityHistory,
+    // Performance stats
+    performance: {
+      activeDays,
+      confirmed: confirmedCount,
+      sharpe,
+      maxDrawdown,
+      winStreak,
+    },
   });
+}
+
+async function computeSharpe(platform: string): Promise<number> {
+  const rows = await query(
+    `SELECT
+       COALESCE(AVG(daily_return) / NULLIF(STDDEV(daily_return), 0), 0) as sharpe
+     FROM (
+       SELECT
+         DATE(snapshot_at) as day,
+         (MAX(bankroll) - MIN(bankroll)) / NULLIF(MIN(bankroll), 0) as daily_return
+       FROM equity_snapshots
+       WHERE platform = $1
+       GROUP BY DATE(snapshot_at)
+       HAVING COUNT(*) > 1
+     ) daily_returns`,
+    [platform]
+  );
+  return parseFloat((rows[0] as any)?.sharpe || "0") || 0;
 }
 
 async function getExecutionLog() {

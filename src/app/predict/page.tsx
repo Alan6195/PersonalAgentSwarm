@@ -3,13 +3,20 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 // ── Types matching /api/predict response ──────────────────────────────────
-interface EquitySnapshot {
+interface PlatformStats {
   bankroll: number;
-  unrealized_pnl: number;
-  total_equity: number;
-  win_rate: number;
-  total_trades: number;
-  snapshot_at: string;
+  bankrollChange: number;
+  winRate: number;
+  trades: number;
+  wins: number;
+  losses: number;
+  openPositions: number;
+  dailyPnl: number;
+  totalPnl: number;
+}
+
+interface PolymarketStats extends PlatformStats {
+  dryRun: boolean;
 }
 
 interface Position {
@@ -47,38 +54,49 @@ interface Hypothesis {
   confidence: number;
   win_count: number;
   loss_count: number;
+  created_at: string;
 }
 
 interface RiskState {
-  current_bankroll: number;
-  peak_bankroll: number;
-  daily_pnl: number;
-  daily_loss: number;
-  current_exposure: number;
-  trading_paused: boolean;
-  pause_reason: string | null;
-  current_drawdown: number;
+  exposure: number;
+  dailyLoss: number;
+  drawdown: number;
+  paused: boolean;
 }
 
 interface PhaseGate {
-  phase: string;
   trades: number;
-  trades_target: number;
-  win_rate: number;
-  win_rate_target: number;
+  tradesTarget: number;
+  winRate: number;
+  winRateTarget: number;
   sharpe: number;
-  sharpe_target: number;
-  ready: boolean;
+  sharpeTarget: number;
+  phase2Unlocked: boolean;
+}
+
+interface EquityPoint {
+  timestamp: string;
+  balance: number;
+}
+
+interface Performance {
+  activeDays: number;
+  confirmed: number;
+  sharpe: number;
+  maxDrawdown: number;
+  winStreak: number;
 }
 
 interface DashboardData {
-  equity: EquitySnapshot | null;
-  equity_history: EquitySnapshot[];
+  manifold: PlatformStats;
+  polymarket: PolymarketStats;
+  phaseGate: PhaseGate;
+  riskState: RiskState;
   positions: Position[];
-  recent_scans: Scan[];
-  risk_state: RiskState | null;
-  phase_gate: PhaseGate;
+  recentScans: Scan[];
   hypotheses: Hypothesis[];
+  equityHistory: EquityPoint[];
+  performance: Performance;
 }
 
 // ── Colour tokens ─────────────────────────────────────────────────────────
@@ -110,57 +128,38 @@ function mulberry32(seed: number) {
   };
 }
 
-function genMockEquityHistory(points = 120): EquitySnapshot[] {
+function genMockEquityHistory(points = 120): EquityPoint[] {
   const rng = mulberry32(0xdeadbeef);
   let val = 1000;
   return Array.from({ length: points }, (_, i) => {
     val = Math.max(800, val * (1 + (rng() - 0.44) * 0.006));
     return {
-      bankroll: +val.toFixed(2),
-      unrealized_pnl: 0,
-      total_equity: +val.toFixed(2),
-      win_rate: 0,
-      total_trades: 0,
-      snapshot_at: new Date(Date.now() - (points - i) * 15 * 60000).toISOString(),
+      timestamp: new Date(Date.now() - (points - i) * 15 * 60000).toISOString(),
+      balance: +val.toFixed(2),
     };
   });
 }
 
 const MOCK_HISTORY = genMockEquityHistory(120);
 
+const MOCK_PLATFORM: PlatformStats = {
+  bankroll: 1000, bankrollChange: 0, winRate: 0, trades: 0,
+  wins: 0, losses: 0, openPositions: 0, dailyPnl: 0, totalPnl: 0,
+};
+
 const MOCK_DATA: DashboardData = {
-  equity: {
-    bankroll: 1000,
-    unrealized_pnl: 0,
-    total_equity: 1000,
-    win_rate: 0,
-    total_trades: 0,
-    snapshot_at: new Date().toISOString(),
+  manifold: { ...MOCK_PLATFORM },
+  polymarket: { ...MOCK_PLATFORM, dryRun: true },
+  phaseGate: {
+    trades: 0, tradesTarget: 15, winRate: 0, winRateTarget: 0.55,
+    sharpe: 0, sharpeTarget: 1.2, phase2Unlocked: false,
   },
-  equity_history: MOCK_HISTORY,
+  riskState: { exposure: 0, dailyLoss: 0, drawdown: 0, paused: false },
   positions: [],
-  recent_scans: [],
-  risk_state: {
-    current_bankroll: 1000,
-    peak_bankroll: 1000,
-    daily_pnl: 0,
-    daily_loss: 0,
-    current_exposure: 0,
-    trading_paused: false,
-    pause_reason: null,
-    current_drawdown: 0,
-  },
-  phase_gate: {
-    phase: 'manifold',
-    trades: 0,
-    trades_target: 30,
-    win_rate: 0,
-    win_rate_target: 0.60,
-    sharpe: 0,
-    sharpe_target: 1.5,
-    ready: false,
-  },
+  recentScans: [],
   hypotheses: [],
+  equityHistory: MOCK_HISTORY,
+  performance: { activeDays: 0, confirmed: 0, sharpe: 0, maxDrawdown: 0, winStreak: 0 },
 };
 
 // ── Tiny helpers ──────────────────────────────────────────────────────────
@@ -236,28 +235,28 @@ function FRow({ label, expr, value, vc }: { label?: string; expr?: string; value
 }
 
 // ── Phase gate ────────────────────────────────────────────────────────────
-function PhaseGate({ gate }: { gate: PhaseGate }) {
-  const progress = Math.min(gate.trades / gate.trades_target, 1);
-  const wrOk = gate.win_rate >= gate.win_rate_target;
-  const shOk = gate.sharpe >= gate.sharpe_target;
-  const trOk = gate.trades >= gate.trades_target;
+function PhaseGatePanel({ gate }: { gate: PhaseGate }) {
+  const progress = Math.min(gate.trades / gate.tradesTarget, 1);
+  const wrOk = gate.winRate >= gate.winRateTarget;
+  const shOk = gate.sharpe >= gate.sharpeTarget;
+  const trOk = gate.trades >= gate.tradesTarget;
   return (
     <Panel title="Phase Gate · Manifold → Polymarket">
       <div style={{ padding: '8px 10px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-          <span style={{ fontSize: 9, color: gate.ready ? C.green : C.yellow, fontFamily: 'monospace' }}>
-            {gate.ready ? '✓ READY FOR LIVE' : '⚠ CONTINUE PAPER TRADING'}
+          <span style={{ fontSize: 9, color: gate.phase2Unlocked ? C.green : C.yellow, fontFamily: 'monospace' }}>
+            {gate.phase2Unlocked ? '✓ PHASE 2 UNLOCKED' : '⚠ CONTINUE PAPER TRADING'}
           </span>
-          <span style={{ fontSize: 9, color: C.label, fontFamily: 'monospace' }}>{gate.trades}/{gate.trades_target} trades</span>
+          <span style={{ fontSize: 9, color: C.label, fontFamily: 'monospace' }}>{gate.trades}/{gate.tradesTarget} trades</span>
         </div>
         <div style={{ height: 3, background: C.dimmer, marginBottom: 8 }}>
-          <div style={{ height: '100%', width: `${progress * 100}%`, background: gate.ready ? C.green : C.greenDim, transition: 'width 1s' }} />
+          <div style={{ height: '100%', width: `${progress * 100}%`, background: gate.phase2Unlocked ? C.green : C.greenDim, transition: 'width 1s' }} />
         </div>
         <div style={{ display: 'flex', gap: 16 }}>
           {[
-            { l: 'TRADES',  v: `${gate.trades}/${gate.trades_target}`, ok: trOk },
-            { l: 'WIN RATE', v: pct(gate.win_rate),                    ok: wrOk, tgt: `≥${pct(gate.win_rate_target)}` },
-            { l: 'SHARPE',  v: gate.sharpe.toFixed(2),                 ok: shOk, tgt: `≥${gate.sharpe_target}` },
+            { l: 'TRADES',  v: `${gate.trades}/${gate.tradesTarget}`, ok: trOk },
+            { l: 'WIN RATE', v: pct(gate.winRate),                    ok: wrOk, tgt: `≥${pct(gate.winRateTarget)}` },
+            { l: 'SHARPE',  v: gate.sharpe.toFixed(2),                ok: shOk, tgt: `≥${gate.sharpeTarget}` },
           ].map(g => (
             <div key={g.l} style={{ fontFamily: 'monospace' }}>
               <div style={{ fontSize: 8, color: C.label }}>{g.l}</div>
@@ -275,14 +274,15 @@ function PhaseGate({ gate }: { gate: PhaseGate }) {
 
 // ── Risk state ────────────────────────────────────────────────────────────
 function RiskPanel({ risk }: { risk: RiskState }) {
-  const ddPct = risk.current_drawdown * 100;
-  const expPct = risk.current_exposure / Math.max(risk.current_bankroll, 1) * 100;
+  const ddPct = risk.drawdown * 100;
+  const expPct = risk.exposure * 100;
+  const dlPct = risk.dailyLoss * 100;
   return (
     <Panel title="Risk State">
       {[
-        { l: 'DRAWDOWN',  v: `${ddPct.toFixed(1)}%`,    bar: ddPct / 15,  warn: ddPct > 10 },
-        { l: 'EXPOSURE',  v: `${expPct.toFixed(1)}%`,   bar: expPct / 40, warn: expPct > 30 },
-        { l: 'DAILY LOSS', v: fmt2(-risk.daily_loss),   bar: risk.daily_loss / (risk.current_bankroll * 0.08), warn: risk.daily_loss > risk.current_bankroll * 0.05 },
+        { l: 'EXPOSURE',   v: `${expPct.toFixed(1)}%`,  bar: expPct / 40,  warn: expPct > 30 },
+        { l: 'DRAWDOWN',   v: `${ddPct.toFixed(1)}%`,   bar: ddPct / 15,   warn: ddPct > 10 },
+        { l: 'DAILY LOSS', v: `${dlPct.toFixed(1)}%`,   bar: dlPct / 8,    warn: dlPct > 5 },
       ].map(r => (
         <div key={r.l} style={{ padding: '5px 8px', borderBottom: `1px solid ${C.border2}` }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
@@ -294,9 +294,9 @@ function RiskPanel({ risk }: { risk: RiskState }) {
           </div>
         </div>
       ))}
-      {risk.trading_paused && (
+      {risk.paused && (
         <div style={{ padding: '5px 8px', background: 'rgba(255,45,45,0.08)', fontSize: 10, color: C.red, fontFamily: 'monospace' }}>
-          ⏸ PAUSED: {risk.pause_reason || 'manual'}
+          ⏸ TRADING PAUSED
         </div>
       )}
     </Panel>
@@ -401,7 +401,7 @@ export default function PredictPage() {
   }, [fetchData]);
 
   // Animate equity on mock data
-  const [liveHistory, setLiveHistory] = useState(MOCK_HISTORY.map(s => s.bankroll));
+  const [liveHistory, setLiveHistory] = useState(MOCK_HISTORY.map(s => s.balance));
   useEffect(() => {
     if (isLive) return;
     const rng = rngRef.current;
@@ -415,16 +415,16 @@ export default function PredictPage() {
   }, [isLive]);
 
   const equityHistory = isLive
-    ? data.equity_history.map(s => s.total_equity)
+    ? data.equityHistory.map(s => s.balance)
     : liveHistory;
 
-  const eq   = data.equity;
-  const risk = data.risk_state;
-  const gate = data.phase_gate;
-  const bal  = eq?.bankroll ?? 1000;
-  const wr   = eq?.win_rate ?? 0;
-  const trades = eq?.total_trades ?? 0;
-  const dailyPnl = risk?.daily_pnl ?? 0;
+  const m    = data.manifold;
+  const risk = data.riskState;
+  const gate = data.phaseGate;
+  const perf = data.performance;
+  const bal  = m.bankroll;
+  const wr   = m.winRate;
+  const trades = m.trades;
 
   return (
     <div style={{ background: C.bg, minHeight: '100vh', fontFamily: 'monospace', color: C.text, fontSize: 11, overflow: 'hidden' }}>
@@ -442,7 +442,7 @@ export default function PredictPage() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 14px', background: '#00050000', borderBottom: `1px solid ${C.border}`, flexWrap: 'wrap' }}>
         <span style={{ color: C.green, fontWeight: 700, fontSize: 13, letterSpacing: '0.08em' }}>◈ PREDICT_AGENT</span>
         {[
-          { label: gate.phase === 'manifold' ? 'PAPER' : '⚡ LIVE', color: gate.phase === 'manifold' ? C.yellow : C.green },
+          { label: gate.phase2Unlocked ? '⚡ LIVE' : 'PAPER', color: gate.phase2Unlocked ? C.green : C.yellow },
           { label: 'LMSR + KELLY', color: C.cyan },
           { label: 'v1.0.0', color: C.greenDim },
         ].map(t => (
@@ -463,18 +463,20 @@ export default function PredictPage() {
       </div>
 
       {/* ── KPI strip ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', borderBottom: `1px solid ${C.border}` }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', borderBottom: `1px solid ${C.border}` }}>
         {[
-          { label: 'BANKROLL',   value: fmtM(bal),                     color: C.green },
-          { label: 'WIN RATE',   value: pct(wr),                        color: wr >= 0.6 ? C.green : wr > 0 ? C.yellow : C.text },
-          { label: 'TOTAL P&L',  value: fmt2(bal - 1000),               color: bal >= 1000 ? C.green : C.red },
-          { label: 'TRADES',     value: `${trades}W / ${data.positions.filter(p => p.status === 'open').length}L`, color: C.text },
-          { label: 'DAILY P&L',  value: fmt2(dailyPnl),                 color: dailyPnl >= 0 ? C.green : C.red },
-          { label: 'DEPLOYED',   value: fmtM(risk?.current_exposure ?? 0), color: C.cyan },
+          { label: 'BANKROLL',   value: fmtM(bal),                     sub: fmt2(m.bankrollChange),              color: C.green },
+          { label: 'WIN RATE',   value: pct(wr),                        sub: `${m.wins}W / ${m.losses}L`,        color: wr >= 0.55 ? C.green : wr > 0 ? C.yellow : C.text },
+          { label: 'TOTAL P&L',  value: fmt2(m.totalPnl),               sub: null,                                color: m.totalPnl >= 0 ? C.green : C.red },
+          { label: 'TRADES',     value: String(m.trades),                sub: `${m.openPositions} open`,           color: C.text },
+          { label: 'DAILY P&L',  value: fmt2(m.dailyPnl),               sub: null,                                color: m.dailyPnl >= 0 ? C.green : C.red },
+          { label: 'NET P&L',    value: fmt2(m.totalPnl),                sub: null,                                color: m.totalPnl >= 0 ? C.green : C.red },
+          { label: 'DEPLOYED',   value: pct(risk.exposure),              sub: null,                                color: C.cyan },
         ].map((k, i) => (
-          <div key={k.label} style={{ padding: '7px 12px', borderRight: i < 5 ? `1px solid ${C.border}` : 'none' }}>
+          <div key={k.label} style={{ padding: '7px 12px', borderRight: i < 6 ? `1px solid ${C.border}` : 'none' }}>
             <div style={{ fontSize: 8, color: C.label, letterSpacing: '0.12em', marginBottom: 4 }}>{k.label}</div>
             <div style={{ fontSize: 20, fontWeight: 700, color: k.color }}>{k.value}</div>
+            {k.sub && <div style={{ fontSize: 9, color: C.dim, marginTop: 2 }}>{k.sub}</div>}
           </div>
         ))}
       </div>
@@ -489,11 +491,11 @@ export default function PredictPage() {
           </Panel>
           <Panel title="Bayesian Posterior">
             <FRow expr="log P(H|D) = log P(H) + Σ log P(Dᵢ|H)" />
-            <FRow label="Prior"     value="0.2198" />
+            <FRow label="Prior"     value="—" vc={C.dim} />
             <FRow label="Posterior" value="—" vc={C.cyan} />
           </Panel>
           <Panel title="Hedge Condition π">
-            <FRow expr="π = 1.00 − (p_Y + p_N)" value={risk ? (1 - (0.48 + 0.49)).toFixed(4) : '—'} vc={C.yellow} />
+            <FRow expr="π = 1.00 − (p_Y + p_N)" value="—" vc={C.dim} />
           </Panel>
           <Panel title="Reward Score S(s)">
             <FRow expr="S(s) = ((v−s)²/v²) · b" />
@@ -521,7 +523,7 @@ export default function PredictPage() {
               </div>
             ))}
           </Panel>
-          {risk && <div style={{ marginTop: 0 }}><RiskPanel risk={risk} /></div>}
+          <RiskPanel risk={risk} />
         </div>
 
         {/* ── CENTER: chart + tabs ── */}
@@ -529,14 +531,17 @@ export default function PredictPage() {
 
           {/* Equity chart */}
           <div style={{ padding: '8px 12px 0', borderBottom: `1px solid ${C.border}` }}>
-            <div style={{ fontSize: 9, color: C.label, letterSpacing: '0.12em', marginBottom: 6 }}>
-              ○ EQUITY CURVE — LMSR BAYESIAN STRATEGY · MANIFOLD PAPER
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 9, color: C.label, letterSpacing: '0.12em', marginBottom: 6 }}>
+              <span>○ EQUITY CURVE — LMSR BAYESIAN STRATEGY · MANIFOLD PAPER</span>
+              <span style={{ padding: '1px 6px', fontSize: 8, border: `1px solid ${isLive ? C.green : C.yellow}`, color: isLive ? C.green : C.yellow }}>
+                {isLive ? 'LIVE' : 'MOCK'}
+              </span>
             </div>
             <div style={{ position: 'relative' }}>
               <SparkLine data={equityHistory} />
               <div style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(0,5,0,0.9)', border: `1px solid ${C.border}`, padding: '4px 10px' }}>
                 <div style={{ fontSize: 18, fontWeight: 700, color: C.green }}>{fmtM(bal)}</div>
-                <div style={{ fontSize: 9, color: C.greenDim }}>{fmt2(bal - 1000)} from start</div>
+                <div style={{ fontSize: 9, color: C.greenDim }}>{fmt2(m.totalPnl)} from start</div>
               </div>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0 6px', fontSize: 8, color: C.dim }}>
@@ -575,9 +580,9 @@ export default function PredictPage() {
                 : data.positions.map(p => <PositionRow key={p.id} pos={p} />)
             )}
             {activeTab === 'scans' && (
-              data.recent_scans.length === 0
+              data.recentScans.length === 0
                 ? <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 11 }}>No scans yet · first scan fires at scheduled time</div>
-                : data.recent_scans.map(s => <ScanRow key={s.id} scan={s} />)
+                : data.recentScans.map(s => <ScanRow key={s.id} scan={s} />)
             )}
             {activeTab === 'hypotheses' && (
               data.hypotheses.length === 0
@@ -589,15 +594,31 @@ export default function PredictPage() {
 
         {/* ── RIGHT: phase gate + stats ── */}
         <div style={{ borderLeft: `1px solid ${C.border}`, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 0 }}>
-          <PhaseGate gate={gate} />
+          <PhaseGatePanel gate={gate} />
+
+          {/* Polymarket status */}
+          <Panel title="Polymarket">
+            <div style={{ padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{
+                padding: '2px 8px', fontSize: 9, fontFamily: 'monospace', fontWeight: 700,
+                border: `1px solid ${data.polymarket.dryRun ? C.yellow : C.green}`,
+                color: data.polymarket.dryRun ? C.yellow : C.green,
+              }}>
+                {data.polymarket.dryRun ? 'DRY RUN' : 'LIVE'}
+              </span>
+              <span style={{ fontSize: 9, color: C.dim }}>
+                {data.polymarket.trades} trades · {pct(data.polymarket.winRate)} WR
+              </span>
+            </div>
+          </Panel>
 
           <Panel title="Performance">
             {[
-              { l: 'Win Rate',    v: pct(wr),             c: wr >= 0.6 ? C.green : C.yellow },
-              { l: 'Total P&L',   v: fmt2(bal - 1000),    c: bal >= 1000 ? C.green : C.red },
-              { l: 'Daily P&L',   v: fmt2(dailyPnl),      c: dailyPnl >= 0 ? C.green : C.red },
-              { l: 'Trades',      v: String(trades),       c: C.text },
-              { l: 'Open',        v: String(data.positions.filter(p => p.status === 'open').length), c: C.cyan },
+              { l: 'Active Days',  v: String(perf.activeDays),    c: C.text },
+              { l: 'Confirmed',    v: String(perf.confirmed),     c: C.green },
+              { l: 'Sharpe',       v: perf.sharpe.toFixed(2),     c: perf.sharpe >= 1.2 ? C.green : C.yellow },
+              { l: 'Max Drawdown', v: pct(perf.maxDrawdown),      c: perf.maxDrawdown > 0.10 ? C.red : C.green },
+              { l: 'Win Streak',   v: String(perf.winStreak),     c: perf.winStreak > 0 ? C.green : C.text },
             ].map(r => (
               <div key={r.l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 10px', borderBottom: `1px solid ${C.border2}` }}>
                 <span style={{ fontSize: 10, color: C.label }}>{r.l}</span>

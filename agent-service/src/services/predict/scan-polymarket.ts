@@ -1,15 +1,16 @@
 /**
  * Predict Agent: Polymarket 5/15-Minute Scanner
  *
- * Fetches active 5/15-minute BTC/ETH/SOL/XRP Up/Down markets from the
- * Polymarket Gamma API, computes LMSR probability + Bayesian update
- * with intel signals, and returns ranked candidates.
+ * Discovers active 5/15-minute BTC/ETH/SOL/XRP Up/Down markets from the
+ * Polymarket Gamma API using slug-based lookups, computes LMSR probability
+ * + Bayesian update with intel signals, and returns ranked candidates.
  *
- * Architecture note: these markets are on the Gamma API, not the CLOB
- * /markets endpoint. Each time window is a separate market instance
- * titled like "Bitcoin Up or Down - March 6, 1:45AM-2:00AM ET".
+ * Discovery method: these markets have predictable slugs following the
+ * pattern "{asset}-updown-{duration}-{windowStartUnix}", e.g.
+ * "btc-updown-5m-1772942700". We compute the current and next few
+ * time windows, construct slugs, and query the Gamma events endpoint.
+ *
  * Order books are fetched from the CLOB using clobTokenIds.
- *
  * Taker fees exist on 15-min markets; min edge raised to 6c to compensate.
  *
  * No Claude call: 5-minute windows are too fast for LLM roundtrip.
@@ -22,17 +23,34 @@ import { lmsrProb, bayesUpdate, fractionalKelly, rewardScore } from './model';
 
 const GAMMA_BASE = 'https://gamma-api.polymarket.com';
 const CLOB_BASE = 'https://clob.polymarket.com';
-const POLY_ASSETS = ['BTC', 'ETH', 'SOL', 'XRP'];
-const POLY_ASSET_NAMES: Record<string, string> = {
-  bitcoin: 'BTC', ethereum: 'ETH', solana: 'SOL', xrp: 'XRP',
-};
+
+// Asset slugs used in market naming
+const ASSET_SLUGS = [
+  { slug: 'btc', name: 'BTC', full: 'Bitcoin' },
+  { slug: 'eth', name: 'ETH', full: 'Ethereum' },
+  { slug: 'sol', name: 'SOL', full: 'Solana' },
+  { slug: 'xrp', name: 'XRP', full: 'XRP' },
+];
+
+// Duration configs: 5-minute and 15-minute windows
+const DURATIONS = [
+  { slug: '5m', minutes: 5 },
+  { slug: '15m', minutes: 15 },
+];
 
 // Min edge raised from 4c to 6c for Polymarket to account for taker fees
 const POLY_MIN_EDGE = 0.06;
 
-// Match "Bitcoin Up or Down - March 6, 1:45AM-2:00AM ET" style titles
-// and also "Bitcoin Up or Down - 15 min" if that format ever appears
-const UP_DOWN_RE = /(bitcoin|ethereum|solana|xrp)\s.*up or down/i;
+// How many upcoming windows to check per asset per duration
+const WINDOWS_TO_CHECK = 4;
+
+/** Gamma API event shape with nested markets */
+interface GammaEvent {
+  id: string;
+  title: string;
+  slug: string;
+  markets: GammaMarket[];
+}
 
 /** Gamma API market shape (subset of fields we need) */
 interface GammaMarket {
@@ -88,7 +106,26 @@ export interface PolyCandidate {
 }
 
 /**
+ * Compute aligned window start timestamps for a given duration.
+ * Windows align to Unix epoch (e.g., 5-min windows at :00, :05, :10, etc.)
+ */
+function getWindowTimestamps(durationMinutes: number, count: number): number[] {
+  const now = Math.floor(Date.now() / 1000);
+  const windowSec = durationMinutes * 60;
+  // Current window start (floor to window boundary)
+  const currentWindowStart = Math.floor(now / windowSec) * windowSec;
+
+  const timestamps: number[] = [];
+  // Include the current window and next few windows
+  for (let i = 0; i < count; i++) {
+    timestamps.push(currentWindowStart + i * windowSec);
+  }
+  return timestamps;
+}
+
+/**
  * Fetch active 5/15-minute Up/Down crypto markets from Polymarket Gamma API
+ * using slug-based discovery.
  */
 export async function scanPolymarket(): Promise<PolyCandidate[]> {
   if (!config.POLYMARKET_API_KEY) {
@@ -96,81 +133,81 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
     return [];
   }
 
-  console.log(`[PolyScan] Fetching Up/Down markets from Gamma API`);
+  console.log(`[PolyScan] Discovering Up/Down markets via slug lookup`);
 
   try {
-    // Use Gamma API text search to find Up/Down crypto markets
-    const res = await fetch(
-      `${GAMMA_BASE}/markets?q=up+or+down&active=true&closed=false&limit=100`,
-    );
+    // Build list of slugs to check
+    const slugsToCheck: { slug: string; asset: string; assetSlug: string; minutes: number }[] = [];
+    for (const asset of ASSET_SLUGS) {
+      for (const dur of DURATIONS) {
+        const timestamps = getWindowTimestamps(dur.minutes, WINDOWS_TO_CHECK);
+        for (const ts of timestamps) {
+          slugsToCheck.push({
+            slug: `${asset.slug}-updown-${dur.slug}-${ts}`,
+            asset: asset.name,
+            assetSlug: asset.slug,
+            minutes: dur.minutes,
+          });
+        }
+      }
+    }
 
-    if (!res.ok) {
-      console.error(`[PolyScan] Gamma API error: ${res.status} ${await res.text()}`);
+    console.log(`[PolyScan] Checking ${slugsToCheck.length} potential market slugs`);
+
+    // Query each slug via the events endpoint (parallel with rate limiting)
+    const BATCH_SIZE = 8;
+    const discoveredMarkets: { market: GammaMarket; asset: string; minutes: number; eventSlug: string }[] = [];
+
+    for (let i = 0; i < slugsToCheck.length; i += BATCH_SIZE) {
+      const batch = slugsToCheck.slice(i, i + BATCH_SIZE);
+      const results = await Promise.allSettled(
+        batch.map(async (s) => {
+          // Try events endpoint first (returns event with nested markets)
+          const res = await fetch(`${GAMMA_BASE}/events/slug/${s.slug}`);
+          if (!res.ok) {
+            // Try markets endpoint as fallback
+            const res2 = await fetch(`${GAMMA_BASE}/markets?slug=${s.slug}`);
+            if (!res2.ok) return null;
+            const markets = await res2.json() as GammaMarket[];
+            if (markets.length === 0) return null;
+            return { markets, slug: s.slug, asset: s.asset, minutes: s.minutes };
+          }
+          const event = await res.json() as GammaEvent;
+          if (!event.markets || event.markets.length === 0) return null;
+          return { markets: event.markets, slug: s.slug, asset: s.asset, minutes: s.minutes };
+        })
+      );
+
+      for (const result of results) {
+        if (result.status === 'fulfilled' && result.value) {
+          const { markets, slug, asset, minutes } = result.value;
+          for (const m of markets) {
+            if (m.active && !m.closed && m.clobTokenIds && m.clobTokenIds.length >= 2) {
+              discoveredMarkets.push({ market: m, asset, minutes, eventSlug: slug });
+            }
+          }
+        }
+      }
+    }
+
+    console.log(`[PolyScan] Discovered ${discoveredMarkets.length} active markets`);
+    for (const d of discoveredMarkets.slice(0, 8)) {
+      console.log(`[PolyScan]   -> "${d.market.question}" (${d.asset} ${d.minutes}m)`);
+    }
+
+    if (discoveredMarkets.length === 0) {
+      console.log('[PolyScan] No active Up/Down markets found. Markets may be between windows.');
       return [];
     }
-
-    const markets: GammaMarket[] = await res.json() as GammaMarket[];
-    console.log(`[PolyScan] Gamma returned ${markets.length} "up or down" markets`);
-
-    // Filter to crypto Up/Down markets for target assets
-    const candidates: GammaMarket[] = [];
-
-    for (const m of markets) {
-      if (!m.active || m.closed) continue;
-      if (!UP_DOWN_RE.test(m.question)) continue;
-      if (!m.clobTokenIds || m.clobTokenIds.length < 2) continue;
-
-      candidates.push(m);
-    }
-
-    console.log(`[PolyScan] Found ${candidates.length} crypto Up/Down candidates`);
-    for (const c of candidates.slice(0, 8)) {
-      console.log(`[PolyScan]   -> "${c.question}" (${c.conditionId.slice(0, 18)}...)`);
-    }
-
-    if (candidates.length === 0) return [];
 
     // Get intel signals for crypto assets
     const intelSignals = await getIntelSignals();
 
-    // Analyze each candidate
+    // Analyze each discovered market
     const bankroll = await getPolyBankroll();
-    const now = Date.now();
     const analyzed: PolyCandidate[] = [];
 
-    for (const m of candidates) {
-      // Determine asset from question
-      const questionLower = m.question.toLowerCase();
-      const asset = Object.entries(POLY_ASSET_NAMES).find(([name]) =>
-        questionLower.includes(name)
-      )?.[1];
-      if (!asset) continue;
-
-      // Extract resolution duration: look for "5 min" or "15 min" in title,
-      // or infer from time window like "1:45AM-2:00AM" (15 min) or "1:45AM-1:50AM" (5 min)
-      let resolutionMinutes = 15; // default
-      const durationMatch = m.question.match(/(\d+)[\s-]*min/i);
-      if (durationMatch) {
-        resolutionMinutes = parseInt(durationMatch[1], 10);
-      } else {
-        // Try to parse from time window: "1:45AM-2:00AM" format
-        const timeMatch = m.question.match(/(\d{1,2}):(\d{2})(AM|PM)\s*-\s*(\d{1,2}):(\d{2})(AM|PM)/i);
-        if (timeMatch) {
-          let startH = parseInt(timeMatch[1], 10);
-          const startM = parseInt(timeMatch[2], 10);
-          const startAmPm = timeMatch[3].toUpperCase();
-          let endH = parseInt(timeMatch[4], 10);
-          const endM = parseInt(timeMatch[5], 10);
-          const endAmPm = timeMatch[6].toUpperCase();
-          if (startAmPm === 'PM' && startH !== 12) startH += 12;
-          if (startAmPm === 'AM' && startH === 12) startH = 0;
-          if (endAmPm === 'PM' && endH !== 12) endH += 12;
-          if (endAmPm === 'AM' && endH === 12) endH = 0;
-          const diffMin = (endH * 60 + endM) - (startH * 60 + startM);
-          if (diffMin > 0 && diffMin <= 30) resolutionMinutes = diffMin;
-        }
-      }
-
+    for (const { market: m, asset, minutes, eventSlug } of discoveredMarkets) {
       // Get market price from Gamma outcomePrices or fetch from CLOB
       let pMarket: number;
       let yesDepth = 0;
@@ -195,7 +232,6 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
       const noTokenId = m.clobTokenIds[1];
       const book = await fetchOrderBook(yesTokenId);
       if (book) {
-        // Use CLOB mid price if available (more accurate than Gamma snapshot)
         pMarket = book.midPrice;
         yesDepth = book.yesDepth;
         noDepth = book.noDepth;
@@ -239,7 +275,7 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
         bankroll * 0.05 // 5% max per position
       );
 
-      const closeDate = new Date(now + resolutionMinutes * 60000);
+      const closeDate = new Date(m.endDate);
       const expectedRet = absEdge * Math.max(0, kellyFrac);
 
       const score = rewardScore({
@@ -253,7 +289,7 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
       const reasoning = `LMSR p=${pLmsr.toFixed(4)}, market=${pMarket.toFixed(4)}, ` +
         `${intel ? `intel ${intel.direction} (${asset})` : 'no intel'}, ` +
         `edge=${(edge * 100).toFixed(1)}c, kelly=${(kellyFrac * 100).toFixed(1)}%, ` +
-        `${resolutionMinutes}min market`;
+        `${minutes}min market`;
 
       analyzed.push({
         id: m.conditionId,
@@ -261,7 +297,7 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
         question: m.question,
         category: 'crypto',
         asset,
-        url: `https://polymarket.com/event/${m.slug}`,
+        url: `https://polymarket.com/event/${eventSlug}`,
         pYes: pMarket,
         pLmsr,
         pBayes,
@@ -271,7 +307,7 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
         kellyFrac,
         expectedRet,
         score,
-        resolutionMinutes,
+        resolutionMinutes: minutes,
         intelAligned,
         intelSignalId,
         reasoning,
@@ -337,7 +373,7 @@ async function fetchOrderBook(tokenId: string): Promise<OrderBookSummary | null>
       return null;
     }
 
-    const book: any = await res.json();
+    const book = await res.json() as any;
 
     // Parse bids/asks to get mid price
     const bids = (book.bids || []).map((b: any) => ({ price: parseFloat(b.price), size: parseFloat(b.size) }));
