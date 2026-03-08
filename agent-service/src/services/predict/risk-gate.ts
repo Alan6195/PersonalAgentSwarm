@@ -66,8 +66,10 @@ export async function validateTrade(candidate: TradeCandidate, bankroll: number)
   const totalExposure = await getTotalOpenExposure(platform);
   const categoryExposure = await getCategoryExposure(platform, category);
 
-  // VaR95 check
-  const var95 = pModel - 1.645 * Math.sqrt(pModel * (1 - pModel));
+  // VaR95 check: worst-case 95% loss as fraction of bankroll
+  // (betSize / bankroll) * max loss fraction at 95th percentile
+  const pLoss = 1 - pModel; // probability of total loss on this bet
+  const var95 = -(betSize / bankroll) * (pLoss + 1.645 * Math.sqrt(pLoss * (1 - pLoss)));
 
   // Max drawdown from peak
   const mdd = today.peak_bankroll > 0
