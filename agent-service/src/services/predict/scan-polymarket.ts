@@ -44,6 +44,12 @@ const POLY_MIN_EDGE = 0.06;
 // How many upcoming windows to check per asset per duration
 const WINDOWS_TO_CHECK = 4;
 
+/** Parse clobTokenIds which Gamma returns as a JSON-encoded string */
+function parseClobTokenIds(raw: string | string[]): string[] {
+  if (Array.isArray(raw)) return raw;
+  try { return JSON.parse(raw); } catch { return []; }
+}
+
 /** Gamma API event shape with nested markets */
 interface GammaEvent {
   id: string;
@@ -60,7 +66,7 @@ interface GammaMarket {
   slug: string;
   outcomes: string[];
   outcomePrices: string;
-  clobTokenIds: string[];
+  clobTokenIds: string | string[]; // Gamma returns JSON-encoded string, not array
   active: boolean;
   closed: boolean;
   endDate: string;
@@ -182,7 +188,8 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
         if (result.status === 'fulfilled' && result.value) {
           const { markets, slug, asset, minutes } = result.value;
           for (const m of markets) {
-            if (m.active && !m.closed && m.clobTokenIds && m.clobTokenIds.length >= 2) {
+            const tokens = parseClobTokenIds(m.clobTokenIds);
+            if (m.active && !m.closed && tokens.length >= 2) {
               discoveredMarkets.push({ market: m, asset, minutes, eventSlug: slug });
             }
           }
@@ -228,8 +235,9 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
       }
 
       // Fetch CLOB order book for depth data using YES token ID
-      const yesTokenId = m.clobTokenIds[0];
-      const noTokenId = m.clobTokenIds[1];
+      const tokenIds = parseClobTokenIds(m.clobTokenIds);
+      const yesTokenId = tokenIds[0];
+      const noTokenId = tokenIds[1];
       const book = await fetchOrderBook(yesTokenId);
       if (book) {
         pMarket = book.midPrice;
@@ -362,11 +370,7 @@ interface OrderBookSummary {
 
 async function fetchOrderBook(tokenId: string): Promise<OrderBookSummary | null> {
   try {
-    const res = await fetch(`${CLOB_BASE}/book?token_id=${tokenId}`, {
-      headers: {
-        'Authorization': `Bearer ${config.POLYMARKET_API_KEY}`,
-      },
-    });
+    const res = await fetch(`${CLOB_BASE}/book?token_id=${tokenId}`);
 
     if (!res.ok) {
       console.warn(`[PolyScan] Order book fetch failed for ${tokenId.slice(0, 20)}...: ${res.status}`);
