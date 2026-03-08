@@ -52,8 +52,8 @@ export async function handleManifoldScan(taskId: number): Promise<string> {
   let tradesBlocked = 0;
 
   for (const market of analyzed) {
-    // Only trade if edge is meaningful
-    if (market.absEdge < 0.04) break; // Sorted by score, so remaining are worse
+    // Only trade if edge is positive and meaningful (YES bets only)
+    if (market.edge < 0.04) continue; // Skip negative-edge / low-edge markets
     if (market.betAmount < 1) continue;
 
     const result = await executeTrade(market, bankroll);

@@ -66,10 +66,9 @@ export async function validateTrade(candidate: TradeCandidate, bankroll: number)
   const totalExposure = await getTotalOpenExposure(platform);
   const categoryExposure = await getCategoryExposure(platform, category);
 
-  // VaR95 check: worst-case 95% loss as fraction of bankroll
-  // (betSize / bankroll) * max loss fraction at 95th percentile
-  const pLoss = 1 - pModel; // probability of total loss on this bet
-  const var95 = -(betSize / bankroll) * (pLoss + 1.645 * Math.sqrt(pLoss * (1 - pLoss)));
+  // VaR95 check: probability-space. At 95% confidence, worst-case probability
+  // must be no more than 10pp below model estimate.
+  const var95 = pModel - 1.645 * Math.sqrt(pModel * (1 - pModel));
 
   // Max drawdown from peak
   const mdd = today.peak_bankroll > 0
@@ -77,7 +76,7 @@ export async function validateTrade(candidate: TradeCandidate, bankroll: number)
     : 0;
 
   const checks: Record<string, boolean> = {
-    edge_sufficient: Math.abs(edge) >= RISK_LIMITS.minEdge,
+    edge_sufficient: edge >= RISK_LIMITS.minEdge,
     min_bet: betSize >= RISK_LIMITS.minBet,
     max_position: betSize <= bankroll * RISK_LIMITS.maxPositionPct,
     expected_return_positive: er > 0,
@@ -88,6 +87,14 @@ export async function validateTrade(candidate: TradeCandidate, bankroll: number)
     total_exposure_ok: (totalExposure + betSize) <= bankroll * RISK_LIMITS.maxTotalExposurePct,
     trading_not_paused: !today.trading_paused,
   };
+
+  // Rejection logging
+  if (!checks.edge_sufficient) {
+    console.error(`[RiskGate] REJECTED: edge ${edge.toFixed(4)} < ${RISK_LIMITS.minEdge}`);
+  }
+  if (!checks.var_within_limit) {
+    console.error(`[RiskGate] REJECTED: VaR95 ${var95.toFixed(4)} < -0.10 (pModel=${pModel.toFixed(4)})`);
+  }
 
   const approved = Object.values(checks).every(Boolean);
 

@@ -51,43 +51,67 @@ export interface AnalyzedMarket extends MarketCandidate {
 
 const MANIFOLD_BASE = 'https://api.manifold.markets/v0';
 
+const SEARCH_TERMS = [
+  'bitcoin price',
+  'ethereum price',
+  'BTC',
+  'ETH',
+  'solana price',
+  'XRP price',
+  'crypto',
+  'OpenAI',
+  'AI model release',
+  'fed rate',
+  'inflation rate',
+];
+
 /**
- * Fetch and filter markets from Manifold
+ * Fetch candidate markets from Manifold using keyword-scoped searches.
+ * Only returns crypto, AI/tech, and economics markets resolving within 7 days.
  */
 export async function scanManifold(): Promise<MarketCandidate[]> {
-  const minTraders = parseInt(process.env.PREDICT_SCAN_MIN_TRADERS || '10', 10);
-  const minPrice = parseFloat(process.env.PREDICT_SCAN_MIN_PRICE || '0.10');
-  const maxPrice = parseFloat(process.env.PREDICT_SCAN_MAX_PRICE || '0.90');
-  const minDays = parseInt(process.env.PREDICT_SCAN_MIN_DAYS || '1', 10);
-  const maxDays = parseInt(process.env.PREDICT_SCAN_MAX_DAYS || '60', 10);
+  console.log(`[Scan] Fetching Manifold markets (${SEARCH_TERMS.length} keyword searches, <=7 days, prob 0.15-0.85, >=20 bettors)`);
 
-  console.log(`[Scan] Fetching Manifold markets (minTraders=${minTraders}, price=${minPrice}-${maxPrice}, days=${minDays}-${maxDays})`);
+  // Parallel keyword-scoped searches
+  const results = await Promise.all(
+    SEARCH_TERMS.map(term =>
+      fetch(`${MANIFOLD_BASE}/search-markets?term=${encodeURIComponent(term)}&sort=score&limit=50`)
+        .then(r => r.ok ? r.json() as Promise<any[]> : [])
+        .catch(() => [] as any[])
+    )
+  );
 
-  const res = await fetch(`${MANIFOLD_BASE}/search-markets?term=&sort=score&limit=100&filter=open`);
-  if (!res.ok) {
-    throw new Error(`Manifold API error: ${res.status} ${res.statusText}`);
-  }
+  // Deduplicate
+  const all = results.flat();
+  const seen = new Set<string>();
+  const unique = all.filter(m => {
+    if (seen.has(m.id)) return false;
+    seen.add(m.id);
+    return true;
+  });
 
-  const markets = await res.json() as any[];
+  console.log(`[Scan] Fetched ${all.length} raw results, ${unique.length} unique after dedup`);
+
+  // Hard filters
   const now = Date.now();
   const candidates: MarketCandidate[] = [];
 
-  for (const m of markets) {
-    // Only binary markets
+  for (const m of unique) {
+    if (m.isResolved !== false) continue;
     if (m.outcomeType !== 'BINARY') continue;
     if (!m.closeTime) continue;
 
     const closeDate = new Date(m.closeTime);
     const daysToResolution = (closeDate.getTime() - now) / (1000 * 60 * 60 * 24);
 
-    // Filter
-    if (daysToResolution < minDays || daysToResolution > maxDays) continue;
-    if ((m.uniqueBettorCount || 0) < minTraders) continue;
+    if (daysToResolution < 0) continue;
+    if (daysToResolution > 7) continue;
 
     const prob = m.probability ?? 0.5;
-    if (prob < minPrice || prob > maxPrice) continue;
+    if (prob < 0.15 || prob > 0.85) continue;
 
-    // Categorize
+    if ((m.uniqueBettorCount || 0) < 20) continue;
+
     const category = categorizeMarket(m.question, m.tags || []);
 
     candidates.push({
@@ -106,7 +130,7 @@ export async function scanManifold(): Promise<MarketCandidate[]> {
     });
   }
 
-  console.log(`[Scan] Found ${candidates.length} candidate markets from ${markets.length} total`);
+  console.log(`[Scan] Found ${candidates.length} candidate markets from ${unique.length} unique`);
   return candidates;
 }
 
