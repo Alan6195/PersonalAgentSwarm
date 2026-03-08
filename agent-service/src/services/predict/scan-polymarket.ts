@@ -82,42 +82,17 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
 
     console.log(`[PolyScan] Fetched ${markets.length} active markets`);
 
-    // DEBUG: Log first 20 market questions + structure to understand what Polymarket returns
-    const sample = markets.slice(0, 20);
-    for (const s of sample) {
-      const endMs = s.end_date_iso ? new Date(s.end_date_iso).getTime() - Date.now() : null;
-      const minsLeft = endMs ? (endMs / 60000).toFixed(0) : 'no-end';
-      console.log(`[PolyScan:DEBUG] "${s.question}" | end=${s.end_date_iso || 'none'} (${minsLeft}min) | active=${s.active} closed=${s.closed} | tokens=${s.tokens?.length || 0} | slug=${s.market_slug || 'none'}`);
-    }
+    // Match on question text: these are rolling always-live contracts
+    // titled "Bitcoin Up or Down - 15 min", "Ethereum Up or Down - 5 min", etc.
+    const UP_DOWN_RE = /(bitcoin|ethereum|solana|xrp|btc|eth|sol)\s.*(up or down).*(5|15)\s*min/i;
 
-    // Count crypto-related markets regardless of time filter
-    const cryptoMatches = markets.filter(m => {
-      const q = (m.question || '').toLowerCase();
-      return POLY_ASSETS.some(a => q.includes(a.toLowerCase()));
-    });
-    console.log(`[PolyScan:DEBUG] Crypto-related markets (any timeframe): ${cryptoMatches.length}`);
-    for (const c of cryptoMatches.slice(0, 10)) {
-      const endMs = c.end_date_iso ? new Date(c.end_date_iso).getTime() - Date.now() : null;
-      const minsLeft = endMs ? (endMs / 60000).toFixed(0) : 'no-end';
-      console.log(`[PolyScan:DEBUG:CRYPTO] "${c.question}" | end=${c.end_date_iso || 'none'} (${minsLeft}min) | active=${c.active} closed=${c.closed} | tokens=${c.tokens?.length || 0}`);
-    }
-
-    // Filter to 5-15 minute resolution on target assets
     const candidates: PolyMarketRaw[] = [];
     const now = Date.now();
 
     for (const m of markets) {
       if (!m.active || m.closed) continue;
-      if (!m.end_date_iso) continue;
 
-      const question = m.question.toLowerCase();
-      const asset = POLY_ASSETS.find(a => question.includes(a.toLowerCase()));
-      if (!asset) continue;
-
-      // Check resolution window: 5-15 minutes
-      const endTime = new Date(m.end_date_iso).getTime();
-      const minutesToResolution = (endTime - now) / (1000 * 60);
-      if (minutesToResolution < 1 || minutesToResolution > 15) continue;
+      if (!UP_DOWN_RE.test(m.question)) continue;
 
       // Must have tokens (YES/NO outcomes)
       if (!m.tokens || m.tokens.length < 2) continue;
@@ -125,7 +100,10 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
       candidates.push(m);
     }
 
-    console.log(`[PolyScan] Found ${candidates.length} 5-min crypto candidates`);
+    console.log(`[PolyScan] Found ${candidates.length} Up/Down crypto candidates`);
+    for (const c of candidates) {
+      console.log(`[PolyScan]   -> "${c.question}" (${c.condition_id})`);
+    }
 
     // Get intel signals for crypto assets
     const intelSignals = await getIntelSignals();
@@ -136,6 +114,10 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
 
     for (const m of candidates) {
       const asset = POLY_ASSETS.find(a => m.question.toLowerCase().includes(a.toLowerCase()))!;
+
+      // Extract resolution duration from question text (e.g. "15 min", "5 min")
+      const durationMatch = m.question.match(/(\d+)\s*min/i);
+      const resolutionMinutes = durationMatch ? parseInt(durationMatch[1], 10) : 15;
 
       // Fetch order book for mid price
       const book = await fetchOrderBook(m.condition_id);
@@ -178,15 +160,14 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
         bankroll * 0.05 // 5% max per position
       );
 
-      const endTime = new Date(m.end_date_iso).getTime();
-      const resolutionMinutes = (endTime - now) / (1000 * 60);
+      const closeDate = new Date(now + resolutionMinutes * 60000);
       const expectedRet = absEdge * Math.max(0, kellyFrac);
 
       const score = rewardScore({
         edge: absEdge,
         kellyFrac: Math.max(0, kellyFrac),
         liquidity: book.totalLiquidity,
-        closeDate: new Date(m.end_date_iso),
+        closeDate,
         volume: book.volume24h,
       });
 
@@ -196,7 +177,7 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
       const reasoning = `LMSR p=${pLmsr.toFixed(4)}, market=${pMarket.toFixed(4)}, ` +
         `${intel ? `intel ${intel.direction} (${asset})` : 'no intel'}, ` +
         `edge=${(edge * 100).toFixed(1)}c, kelly=${(kellyFrac * 100).toFixed(1)}%, ` +
-        `resolves in ${resolutionMinutes.toFixed(0)}min`;
+        `${resolutionMinutes}min rolling market`;
 
       analyzed.push({
         id: m.condition_id,
