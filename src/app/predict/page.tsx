@@ -164,7 +164,7 @@ const MOCK_DATA: DashboardData = {
 
 // ── Tiny helpers ──────────────────────────────────────────────────────────
 function fmt2(n: number) { return n >= 0 ? `+${n.toFixed(2)}` : n.toFixed(2); }
-function fmtM(n: number) { return `M$${n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`; }
+function fmtUsd(n: number) { return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 function pct(n: number)  { return `${(n * 100).toFixed(1)}%`; }
 function timeAgo(iso: string) {
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -241,7 +241,7 @@ function PhaseGatePanel({ gate }: { gate: PhaseGate }) {
   const shOk = gate.sharpe >= gate.sharpeTarget;
   const trOk = gate.trades >= gate.tradesTarget;
   return (
-    <Panel title="Phase Gate · Manifold → Polymarket">
+    <Panel title="Phase Gate · Dry Run → Live USDC">
       <div style={{ padding: '8px 10px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
           <span style={{ fontSize: 9, color: gate.phase2Unlocked ? C.green : C.yellow, fontFamily: 'monospace' }}>
@@ -418,13 +418,13 @@ export default function PredictPage() {
     ? data.equityHistory.map(s => s.balance)
     : liveHistory;
 
-  const m    = data.manifold;
+  const p    = data.polymarket;
   const risk = data.riskState;
   const gate = data.phaseGate;
   const perf = data.performance;
-  const bal  = m.bankroll;
-  const wr   = m.winRate;
-  const trades = m.trades;
+  const bal  = p.bankroll;
+  const wr   = p.winRate;
+  const trades = p.trades;
 
   return (
     <div style={{ background: C.bg, minHeight: '100vh', fontFamily: 'monospace', color: C.text, fontSize: 11, overflow: 'hidden' }}>
@@ -457,7 +457,7 @@ export default function PredictPage() {
           </span>
           <span style={{ fontSize: 9, color: isLive ? C.green : C.yellow }}>{isLive ? 'LIVE' : 'MOCK'}</span>
         </span>
-        <span style={{ fontSize: 9, color: C.dim }}>MANIFOLD</span>
+        <span style={{ fontSize: 9, color: C.dim }}>POLYMARKET</span>
         <span style={{ fontSize: 9, color: C.dim }}>10s poll</span>
         <Cursor />
       </div>
@@ -465,12 +465,12 @@ export default function PredictPage() {
       {/* ── KPI strip ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', borderBottom: `1px solid ${C.border}` }}>
         {[
-          { label: 'BANKROLL',   value: fmtM(bal),                     sub: fmt2(m.bankrollChange),              color: C.green },
-          { label: 'WIN RATE',   value: pct(wr),                        sub: `${m.wins}W / ${m.losses}L`,        color: wr >= 0.55 ? C.green : wr > 0 ? C.yellow : C.text },
-          { label: 'TOTAL P&L',  value: fmt2(m.totalPnl),               sub: null,                                color: m.totalPnl >= 0 ? C.green : C.red },
-          { label: 'TRADES',     value: String(m.trades),                sub: `${m.openPositions} open`,           color: C.text },
-          { label: 'DAILY P&L',  value: fmt2(m.dailyPnl),               sub: null,                                color: m.dailyPnl >= 0 ? C.green : C.red },
-          { label: 'NET P&L',    value: fmt2(m.totalPnl),                sub: null,                                color: m.totalPnl >= 0 ? C.green : C.red },
+          { label: 'BANKROLL',   value: fmtUsd(bal),                    sub: fmt2(p.bankrollChange),              color: C.green },
+          { label: 'WIN RATE',   value: pct(wr),                        sub: `${p.wins}W / ${p.losses}L`,        color: wr >= 0.55 ? C.green : wr > 0 ? C.yellow : C.text },
+          { label: 'TOTAL P&L',  value: fmt2(p.totalPnl),               sub: null,                                color: p.totalPnl >= 0 ? C.green : C.red },
+          { label: 'TRADES',     value: String(p.trades),                sub: `${p.openPositions} open`,           color: C.text },
+          { label: 'DAILY P&L',  value: fmt2(p.dailyPnl),               sub: null,                                color: p.dailyPnl >= 0 ? C.green : C.red },
+          { label: 'NET P&L',    value: fmt2(p.totalPnl),                sub: null,                                color: p.totalPnl >= 0 ? C.green : C.red },
           { label: 'DEPLOYED',   value: pct(risk.exposure),              sub: null,                                color: C.cyan },
         ].map((k, i) => (
           <div key={k.label} style={{ padding: '7px 12px', borderRight: i < 6 ? `1px solid ${C.border}` : 'none' }}>
@@ -532,7 +532,7 @@ export default function PredictPage() {
           {/* Equity chart */}
           <div style={{ padding: '8px 12px 0', borderBottom: `1px solid ${C.border}` }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 9, color: C.label, letterSpacing: '0.12em', marginBottom: 6 }}>
-              <span>○ EQUITY CURVE — LMSR BAYESIAN STRATEGY · MANIFOLD PAPER</span>
+              <span>○ EQUITY CURVE — LMSR BAYESIAN STRATEGY · POLYMARKET {p.dryRun ? 'DRY RUN' : 'LIVE'}</span>
               <span style={{ padding: '1px 6px', fontSize: 8, border: `1px solid ${isLive ? C.green : C.yellow}`, color: isLive ? C.green : C.yellow }}>
                 {isLive ? 'LIVE' : 'MOCK'}
               </span>
@@ -540,8 +540,8 @@ export default function PredictPage() {
             <div style={{ position: 'relative' }}>
               <SparkLine data={equityHistory} />
               <div style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(0,5,0,0.9)', border: `1px solid ${C.border}`, padding: '4px 10px' }}>
-                <div style={{ fontSize: 18, fontWeight: 700, color: C.green }}>{fmtM(bal)}</div>
-                <div style={{ fontSize: 9, color: C.greenDim }}>{fmt2(m.totalPnl)} from start</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: C.green }}>{fmtUsd(bal)}</div>
+                <div style={{ fontSize: 9, color: C.greenDim }}>{fmt2(p.totalPnl)} from start</div>
               </div>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0 6px', fontSize: 8, color: C.dim }}>

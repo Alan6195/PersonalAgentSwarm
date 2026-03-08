@@ -80,14 +80,14 @@ async function getDashboard() {
   // Polymarket dry run flag
   const polyDryRun = process.env.PREDICT_POLY_DRY_RUN === 'true';
 
-  // Risk state (latest daily risk for manifold)
+  // Risk state (latest daily risk for polymarket)
   const riskRows = await query(
     `SELECT * FROM daily_risk_state
-     WHERE platform = 'manifold'
+     WHERE platform = 'polymarket'
      ORDER BY date DESC LIMIT 1`
   );
   const riskRaw = riskRows[0] as Record<string, any> | undefined;
-  const currentBankroll = riskRaw ? parseFloat(riskRaw.current_bankroll) || manifold.bankroll : manifold.bankroll;
+  const currentBankroll = riskRaw ? parseFloat(riskRaw.current_bankroll) || polymarket.bankroll : polymarket.bankroll;
   const peakBankroll = riskRaw ? parseFloat(riskRaw.peak_bankroll) || currentBankroll : currentBankroll;
   const exposure = riskRaw ? (parseFloat(riskRaw.current_exposure) || 0) / Math.max(currentBankroll, 1) : 0;
   const dailyLoss = riskRaw ? Math.abs(parseFloat(riskRaw.daily_loss) || 0) / Math.max(currentBankroll, 1) : 0;
@@ -105,7 +105,7 @@ async function getDashboard() {
   const equityRows = await query(
     `SELECT snapshot_at as timestamp, bankroll as balance
      FROM equity_snapshots
-     WHERE platform = 'manifold'
+     WHERE platform = 'polymarket'
      ORDER BY snapshot_at ASC
      LIMIT 100`
   );
@@ -179,18 +179,17 @@ async function getDashboard() {
   }));
 
   // Phase gate with Sharpe calculation
-  const sharpe = await computeSharpe('manifold');
+  const sharpe = await computeSharpe('polymarket');
 
-  const phase = parseInt(process.env.PREDICT_PHASE || "1");
   const tradesTarget = 15;
   const winRateTarget = 0.55;
   const sharpeTarget = 1.2;
-  const phase2Unlocked = manifold.trades >= tradesTarget && manifold.winRate >= winRateTarget && sharpe >= sharpeTarget;
+  const phase2Unlocked = polymarket.trades >= tradesTarget && polymarket.winRate >= winRateTarget && sharpe >= sharpeTarget;
 
   const phaseGate = {
-    trades: manifold.trades,
+    trades: polymarket.trades,
     tradesTarget,
-    winRate: manifold.winRate,
+    winRate: polymarket.winRate,
     winRateTarget,
     sharpe,
     sharpeTarget,
@@ -200,7 +199,7 @@ async function getDashboard() {
   // Performance stats
   const activeDaysRows = await query(
     `SELECT COUNT(DISTINCT DATE(snapshot_at)) as days
-     FROM equity_snapshots WHERE platform = 'manifold'`
+     FROM equity_snapshots WHERE platform = 'polymarket'`
   );
   const activeDays = parseInt((activeDaysRows[0] as any)?.days || "0");
 
@@ -209,7 +208,7 @@ async function getDashboard() {
   // Max drawdown from equity snapshots
   const maxDdRows = await query(
     `SELECT bankroll as balance FROM equity_snapshots
-     WHERE platform = 'manifold' ORDER BY snapshot_at ASC`
+     WHERE platform = 'polymarket' ORDER BY snapshot_at ASC`
   );
   let maxDrawdown = 0;
   let peak = 0;
@@ -223,7 +222,7 @@ async function getDashboard() {
   // Win streak
   const streakRows = await query(
     `SELECT status FROM market_positions
-     WHERE platform = 'manifold'
+     WHERE platform = 'polymarket'
        AND status IN ('closed_win', 'closed_loss')
        AND (notes IS NULL OR notes NOT LIKE 'scanner bug%')
      ORDER BY closed_at DESC`
