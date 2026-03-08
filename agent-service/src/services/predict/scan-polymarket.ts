@@ -82,6 +82,17 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
 
     console.log(`[PolyScan] Fetched ${markets.length} active markets`);
 
+    // DEBUG: Log first 5 market questions + any crypto matches from raw data
+    for (const s of markets.slice(0, 5)) {
+      console.log(`[PolyScan:DEBUG] q="${s.question}" | active=${s.active} closed=${s.closed} | tokens=${s.tokens?.length || 0}`);
+    }
+    // Also log any market containing crypto keywords
+    const cryptoHits = markets.filter(m => /(bitcoin|ethereum|solana|xrp|btc|eth|sol)/i.test(m.question || ''));
+    console.log(`[PolyScan:DEBUG] Crypto keyword matches in ${markets.length} markets: ${cryptoHits.length}`);
+    for (const c of cryptoHits.slice(0, 10)) {
+      console.log(`[PolyScan:DEBUG:CRYPTO] q="${c.question}" | active=${c.active} closed=${c.closed} | tokens=${c.tokens?.length || 0} | slug=${c.market_slug || 'none'}`);
+    }
+
     // Match on question text: these are rolling always-live contracts
     // titled "Bitcoin Up or Down - 15 min", "Ethereum Up or Down - 5 min", etc.
     const UP_DOWN_RE = /(bitcoin|ethereum|solana|xrp|btc|eth|sol)\s.*(up or down).*(5|15)\s*min/i;
