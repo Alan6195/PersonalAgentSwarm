@@ -233,6 +233,52 @@ async function getDashboard() {
     else break;
   }
 
+  // API cost tracking
+  const todayCostRows = await query(
+    `SELECT agent_id, COALESCE(SUM(cost_cents), 0) as total_cents,
+            COALESCE(SUM(total_tokens), 0) as tokens, COUNT(*) as calls
+     FROM cost_events
+     WHERE created_at >= CURRENT_DATE
+     GROUP BY agent_id
+     ORDER BY total_cents DESC`
+  );
+  const monthCostRows = await query(
+    `SELECT COALESCE(SUM(total_cost_cents), 0) as total_cents,
+            COALESCE(SUM(total_tokens), 0) as tokens,
+            COALESCE(SUM(task_count), 0) as calls
+     FROM cost_daily
+     WHERE date >= DATE_TRUNC('month', CURRENT_DATE)`
+  );
+  const modelCostRows = await query(
+    `SELECT model, COALESCE(SUM(cost_cents), 0) as total_cents, COUNT(*) as calls
+     FROM cost_events
+     WHERE created_at >= DATE_TRUNC('month', CURRENT_DATE)
+     GROUP BY model
+     ORDER BY total_cents DESC`
+  );
+
+  const costs = {
+    today: {
+      total: todayCostRows.reduce((sum: number, r: any) => sum + parseInt(r.total_cents || '0'), 0) / 100,
+      byAgent: todayCostRows.map((r: any) => ({
+        agent: r.agent_id,
+        total: parseInt(r.total_cents || '0') / 100,
+        tokens: parseInt(r.tokens || '0'),
+        calls: parseInt(r.calls || '0'),
+      })),
+    },
+    month: {
+      total: parseInt((monthCostRows[0] as any)?.total_cents || '0') / 100,
+      tokens: parseInt((monthCostRows[0] as any)?.tokens || '0'),
+      calls: parseInt((monthCostRows[0] as any)?.calls || '0'),
+    },
+    byModel: modelCostRows.map((r: any) => ({
+      model: r.model,
+      total: parseInt(r.total_cents || '0') / 100,
+      calls: parseInt(r.calls || '0'),
+    })),
+  };
+
   return NextResponse.json({
     manifold: {
       bankroll: manifold.bankroll,
@@ -263,7 +309,7 @@ async function getDashboard() {
     recentScans,
     hypotheses,
     equityHistory,
-    // Performance stats
+    costs,
     performance: {
       activeDays,
       confirmed: confirmedCount,

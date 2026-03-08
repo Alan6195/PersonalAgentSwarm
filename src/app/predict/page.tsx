@@ -87,6 +87,25 @@ interface Performance {
   winStreak: number;
 }
 
+interface CostByAgent {
+  agent: string;
+  total: number;
+  tokens: number;
+  calls: number;
+}
+
+interface CostByModel {
+  model: string;
+  total: number;
+  calls: number;
+}
+
+interface Costs {
+  today: { total: number; byAgent: CostByAgent[] };
+  month: { total: number; tokens: number; calls: number };
+  byModel: CostByModel[];
+}
+
 interface DashboardData {
   manifold: PlatformStats;
   polymarket: PolymarketStats;
@@ -96,6 +115,7 @@ interface DashboardData {
   recentScans: Scan[];
   hypotheses: Hypothesis[];
   equityHistory: EquityPoint[];
+  costs?: Costs;
   performance: Performance;
 }
 
@@ -165,6 +185,8 @@ const MOCK_DATA: DashboardData = {
 // ── Tiny helpers ──────────────────────────────────────────────────────────
 function fmt2(n: number) { return n >= 0 ? `+${n.toFixed(2)}` : n.toFixed(2); }
 function fmtUsd(n: number) { return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
+function fmtCost(n: number) { return n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`; }
+function shortModel(m: string) { return m.replace(/-\d{8}$/, '').replace('claude-', ''); }
 function pct(n: number)  { return `${(n * 100).toFixed(1)}%`; }
 function timeAgo(iso: string) {
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -669,6 +691,48 @@ export default function PredictPage() {
               </div>
             ))}
           </Panel>
+
+          {/* API Cost Tracker */}
+          {(() => {
+            const c = data.costs;
+            const todayColor = !c ? C.dim : c.today.total > 5 ? C.red : c.today.total > 1 ? C.yellow : C.green;
+            return (
+              <Panel title="API Cost Tracker">
+                {[
+                  { l: 'TODAY',       v: fmtCost(c?.today.total ?? 0),  c: todayColor },
+                  { l: 'THIS MONTH',  v: fmtCost(c?.month.total ?? 0),  c: C.text },
+                  { l: 'TOTAL CALLS', v: String(c?.month.calls ?? 0),    c: C.dim },
+                ].map(r => (
+                  <div key={r.l} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 10px', borderBottom: `1px solid ${C.border2}` }}>
+                    <span style={{ fontSize: 9, color: C.label }}>{r.l}</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: r.c, fontFamily: 'monospace' }}>{r.v}</span>
+                  </div>
+                ))}
+                {c && c.today.byAgent.length > 0 && (
+                  <>
+                    <div style={{ padding: '3px 10px', fontSize: 8, color: C.label, letterSpacing: '0.1em', borderBottom: `1px solid ${C.border2}` }}>BY AGENT</div>
+                    {c.today.byAgent.map(a => (
+                      <div key={a.agent} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 10px', borderBottom: `1px solid ${C.border2}` }}>
+                        <span style={{ fontSize: 9, color: C.text }}>{a.agent}</span>
+                        <span style={{ fontSize: 10, color: C.greenDim, fontFamily: 'monospace' }}>{fmtCost(a.total)}</span>
+                      </div>
+                    ))}
+                  </>
+                )}
+                {c && c.byModel.length > 0 && (
+                  <>
+                    <div style={{ padding: '3px 10px', fontSize: 8, color: C.label, letterSpacing: '0.1em', borderBottom: `1px solid ${C.border2}` }}>BY MODEL</div>
+                    {c.byModel.map(m => (
+                      <div key={m.model} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 10px', borderBottom: `1px solid ${C.border2}` }}>
+                        <span style={{ fontSize: 9, color: C.text }}>{shortModel(m.model)}</span>
+                        <span style={{ fontSize: 10, color: C.greenDim, fontFamily: 'monospace' }}>{fmtCost(m.total)}</span>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </Panel>
+            );
+          })()}
         </div>
       </div>
     </div>
