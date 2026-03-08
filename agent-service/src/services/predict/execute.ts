@@ -270,16 +270,18 @@ async function checkManifoldResolution(position: any): Promise<ResolutionResult 
     console.warn(`[Execute] Failed to update risk state for position #${position.id}:`, (err as Error).message);
   }
 
-  // Fire-and-forget: log hypothesis evidence
-  maybeLogHypothesis({
-    positionId: position.id,
-    category: position.category || 'other',
-    direction: position.direction,
-    edge: parseFloat(position.edge),
-    pnlPct,
-    marketQuestion: position.question,
-    intelAligned: position.intel_aligned,
-  }).catch(err => console.warn(`[Execute] Hypothesis logging failed:`, (err as Error).message));
+  // Fire-and-forget: log hypothesis evidence (skip flagged positions)
+  if (!position.notes || !position.notes.startsWith('scanner bug')) {
+    maybeLogHypothesis({
+      positionId: position.id,
+      category: position.category || 'other',
+      direction: position.direction,
+      edge: parseFloat(position.edge),
+      pnlPct,
+      marketQuestion: position.question,
+      intelAligned: position.intel_aligned,
+    }).catch(err => console.warn(`[Execute] Hypothesis logging failed:`, (err as Error).message));
+  }
 
   console.log(`[Execute] Position #${position.id} resolved: ${outcome.toUpperCase()} | P&L: ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)`);
 
@@ -346,7 +348,9 @@ export async function getTradeStats(platform: string): Promise<{
        COUNT(*) FILTER (WHERE status = 'closed_win') as wins,
        COUNT(*) FILTER (WHERE status = 'closed_loss') as losses,
        COALESCE(SUM(pnl) FILTER (WHERE status IN ('closed_win', 'closed_loss')), 0) as total_pnl
-     FROM market_positions WHERE platform = $1`,
+     FROM market_positions
+     WHERE platform = $1
+       AND (notes IS NULL OR notes NOT LIKE 'scanner bug%')`,
     [platform]
   );
 

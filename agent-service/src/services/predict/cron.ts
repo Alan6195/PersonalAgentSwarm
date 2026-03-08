@@ -84,12 +84,14 @@ export async function handleEquitySnapshot(taskId: number): Promise<string> {
     [platform]
   );
 
-  // Get win rate
+  // Get win rate (exclude scanner bug positions)
   const stats = await queryOne<any>(
     `SELECT
        COUNT(*) FILTER (WHERE status IN ('closed_win', 'closed_loss')) as total,
        COUNT(*) FILTER (WHERE status = 'closed_win') as wins
-     FROM market_positions WHERE platform = $1`,
+     FROM market_positions
+     WHERE platform = $1
+       AND (notes IS NULL OR notes NOT LIKE 'scanner bug%')`,
     [platform]
   );
 

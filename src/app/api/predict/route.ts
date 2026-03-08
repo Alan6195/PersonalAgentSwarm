@@ -63,7 +63,7 @@ async function getDashboard() {
      LIMIT 20`
   );
 
-  // Trade stats
+  // Trade stats (exclude scanner bug positions from win rate / phase gate)
   const stats = await query(
     `SELECT
        COUNT(*) FILTER (WHERE status IN ('closed_win', 'closed_loss')) as total_trades,
@@ -72,7 +72,9 @@ async function getDashboard() {
        COALESCE(SUM(pnl) FILTER (WHERE status IN ('closed_win', 'closed_loss')), 0) as total_pnl,
        COUNT(*) FILTER (WHERE status = 'open') as open_positions,
        COALESCE(SUM(bet_size) FILTER (WHERE status = 'open'), 0) as deployed
-     FROM market_positions WHERE platform = 'manifold'`
+     FROM market_positions
+     WHERE platform = 'manifold'
+       AND (notes IS NULL OR notes NOT LIKE 'scanner bug%')`
   );
 
   // Phase gate
