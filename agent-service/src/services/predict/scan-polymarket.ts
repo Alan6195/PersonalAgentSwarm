@@ -109,7 +109,7 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
       return [];
     }
 
-    const markets: GammaMarket[] = await res.json();
+    const markets: GammaMarket[] = await res.json() as GammaMarket[];
     console.log(`[PolyScan] Gamma returned ${markets.length} "up or down" markets`);
 
     // Filter to crypto Up/Down markets for target assets
