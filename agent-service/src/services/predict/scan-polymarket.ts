@@ -82,6 +82,26 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
 
     console.log(`[PolyScan] Fetched ${markets.length} active markets`);
 
+    // DEBUG: Log first 20 market questions + structure to understand what Polymarket returns
+    const sample = markets.slice(0, 20);
+    for (const s of sample) {
+      const endMs = s.end_date_iso ? new Date(s.end_date_iso).getTime() - Date.now() : null;
+      const minsLeft = endMs ? (endMs / 60000).toFixed(0) : 'no-end';
+      console.log(`[PolyScan:DEBUG] "${s.question}" | end=${s.end_date_iso || 'none'} (${minsLeft}min) | active=${s.active} closed=${s.closed} | tokens=${s.tokens?.length || 0} | slug=${s.market_slug || 'none'}`);
+    }
+
+    // Count crypto-related markets regardless of time filter
+    const cryptoMatches = markets.filter(m => {
+      const q = (m.question || '').toLowerCase();
+      return POLY_ASSETS.some(a => q.includes(a.toLowerCase()));
+    });
+    console.log(`[PolyScan:DEBUG] Crypto-related markets (any timeframe): ${cryptoMatches.length}`);
+    for (const c of cryptoMatches.slice(0, 10)) {
+      const endMs = c.end_date_iso ? new Date(c.end_date_iso).getTime() - Date.now() : null;
+      const minsLeft = endMs ? (endMs / 60000).toFixed(0) : 'no-end';
+      console.log(`[PolyScan:DEBUG:CRYPTO] "${c.question}" | end=${c.end_date_iso || 'none'} (${minsLeft}min) | active=${c.active} closed=${c.closed} | tokens=${c.tokens?.length || 0}`);
+    }
+
     // Filter to 5-15 minute resolution on target assets
     const candidates: PolyMarketRaw[] = [];
     const now = Date.now();
