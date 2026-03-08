@@ -1,9 +1,16 @@
 /**
- * Predict Agent: Polymarket 5-Minute Scanner
+ * Predict Agent: Polymarket 5/15-Minute Scanner
  *
- * Fetches active 5-minute BTC/ETH/SOL/XRP Up/Down markets from the
- * Polymarket CLOB API, computes LMSR probability + Bayesian update
+ * Fetches active 5/15-minute BTC/ETH/SOL/XRP Up/Down markets from the
+ * Polymarket Gamma API, computes LMSR probability + Bayesian update
  * with intel signals, and returns ranked candidates.
+ *
+ * Architecture note: these markets are on the Gamma API, not the CLOB
+ * /markets endpoint. Each time window is a separate market instance
+ * titled like "Bitcoin Up or Down - March 6, 1:45AM-2:00AM ET".
+ * Order books are fetched from the CLOB using clobTokenIds.
+ *
+ * Taker fees exist on 15-min markets; min edge raised to 6c to compensate.
  *
  * No Claude call: 5-minute windows are too fast for LLM roundtrip.
  * All probability estimation is deterministic LMSR + Bayes.
@@ -11,10 +18,37 @@
 
 import { config } from '../../config';
 import { query } from '../../db';
-import { lmsrProb, bayesUpdate, fractionalKelly, betSize as calcBetSize, rewardScore } from './model';
+import { lmsrProb, bayesUpdate, fractionalKelly, rewardScore } from './model';
 
+const GAMMA_BASE = 'https://gamma-api.polymarket.com';
 const CLOB_BASE = 'https://clob.polymarket.com';
 const POLY_ASSETS = ['BTC', 'ETH', 'SOL', 'XRP'];
+const POLY_ASSET_NAMES: Record<string, string> = {
+  bitcoin: 'BTC', ethereum: 'ETH', solana: 'SOL', xrp: 'XRP',
+};
+
+// Min edge raised from 4c to 6c for Polymarket to account for taker fees
+const POLY_MIN_EDGE = 0.06;
+
+// Match "Bitcoin Up or Down - March 6, 1:45AM-2:00AM ET" style titles
+// and also "Bitcoin Up or Down - 15 min" if that format ever appears
+const UP_DOWN_RE = /(bitcoin|ethereum|solana|xrp)\s.*up or down/i;
+
+/** Gamma API market shape (subset of fields we need) */
+interface GammaMarket {
+  id: string;
+  question: string;
+  conditionId: string;
+  slug: string;
+  outcomes: string[];
+  outcomePrices: string;
+  clobTokenIds: string[];
+  active: boolean;
+  closed: boolean;
+  endDate: string;
+  volume: string;
+  liquidity: string;
+}
 
 export interface PolyMarketRaw {
   condition_id: string;
@@ -54,7 +88,7 @@ export interface PolyCandidate {
 }
 
 /**
- * Fetch active 5-minute Up/Down crypto markets from Polymarket CLOB
+ * Fetch active 5/15-minute Up/Down crypto markets from Polymarket Gamma API
  */
 export async function scanPolymarket(): Promise<PolyCandidate[]> {
   if (!config.POLYMARKET_API_KEY) {
@@ -62,85 +96,119 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
     return [];
   }
 
-  console.log(`[PolyScan] Fetching active markets for ${POLY_ASSETS.join(', ')}`);
+  console.log(`[PolyScan] Fetching Up/Down markets from Gamma API`);
 
   try {
-    // Fetch active markets
-    const res = await fetch(`${CLOB_BASE}/markets?active=true&closed=false&limit=200`, {
-      headers: {
-        'Authorization': `Bearer ${config.POLYMARKET_API_KEY}`,
-      },
-    });
+    // Use Gamma API text search to find Up/Down crypto markets
+    const res = await fetch(
+      `${GAMMA_BASE}/markets?q=up+or+down&active=true&closed=false&limit=100`,
+    );
 
     if (!res.ok) {
-      console.error(`[PolyScan] CLOB API error: ${res.status} ${await res.text()}`);
+      console.error(`[PolyScan] Gamma API error: ${res.status} ${await res.text()}`);
       return [];
     }
 
-    const data: any = await res.json();
-    const markets: PolyMarketRaw[] = Array.isArray(data) ? data : (data.data || data.markets || []);
+    const markets: GammaMarket[] = await res.json();
+    console.log(`[PolyScan] Gamma returned ${markets.length} "up or down" markets`);
 
-    console.log(`[PolyScan] Fetched ${markets.length} active markets`);
-
-    // DEBUG: Log first 5 market questions + any crypto matches from raw data
-    for (const s of markets.slice(0, 5)) {
-      console.log(`[PolyScan:DEBUG] q="${s.question}" | active=${s.active} closed=${s.closed} | tokens=${s.tokens?.length || 0}`);
-    }
-    // Also log any market containing crypto keywords
-    const cryptoHits = markets.filter(m => /(bitcoin|ethereum|solana|xrp|btc|eth|sol)/i.test(m.question || ''));
-    console.log(`[PolyScan:DEBUG] Crypto keyword matches in ${markets.length} markets: ${cryptoHits.length}`);
-    for (const c of cryptoHits.slice(0, 10)) {
-      console.log(`[PolyScan:DEBUG:CRYPTO] q="${c.question}" | active=${c.active} closed=${c.closed} | tokens=${c.tokens?.length || 0} | slug=${c.market_slug || 'none'}`);
-    }
-
-    // Match on question text: these are rolling always-live contracts
-    // titled "Bitcoin Up or Down - 15 min", "Ethereum Up or Down - 5 min", etc.
-    const UP_DOWN_RE = /(bitcoin|ethereum|solana|xrp|btc|eth|sol)\s.*(up or down).*(5|15)\s*min/i;
-
-    const candidates: PolyMarketRaw[] = [];
-    const now = Date.now();
+    // Filter to crypto Up/Down markets for target assets
+    const candidates: GammaMarket[] = [];
 
     for (const m of markets) {
       if (!m.active || m.closed) continue;
-
       if (!UP_DOWN_RE.test(m.question)) continue;
-
-      // Must have tokens (YES/NO outcomes)
-      if (!m.tokens || m.tokens.length < 2) continue;
+      if (!m.clobTokenIds || m.clobTokenIds.length < 2) continue;
 
       candidates.push(m);
     }
 
-    console.log(`[PolyScan] Found ${candidates.length} Up/Down crypto candidates`);
-    for (const c of candidates) {
-      console.log(`[PolyScan]   -> "${c.question}" (${c.condition_id})`);
+    console.log(`[PolyScan] Found ${candidates.length} crypto Up/Down candidates`);
+    for (const c of candidates.slice(0, 8)) {
+      console.log(`[PolyScan]   -> "${c.question}" (${c.conditionId.slice(0, 18)}...)`);
     }
+
+    if (candidates.length === 0) return [];
 
     // Get intel signals for crypto assets
     const intelSignals = await getIntelSignals();
 
     // Analyze each candidate
     const bankroll = await getPolyBankroll();
+    const now = Date.now();
     const analyzed: PolyCandidate[] = [];
 
     for (const m of candidates) {
-      const asset = POLY_ASSETS.find(a => m.question.toLowerCase().includes(a.toLowerCase()))!;
+      // Determine asset from question
+      const questionLower = m.question.toLowerCase();
+      const asset = Object.entries(POLY_ASSET_NAMES).find(([name]) =>
+        questionLower.includes(name)
+      )?.[1];
+      if (!asset) continue;
 
-      // Extract resolution duration from question text (e.g. "15 min", "5 min")
-      const durationMatch = m.question.match(/(\d+)\s*min/i);
-      const resolutionMinutes = durationMatch ? parseInt(durationMatch[1], 10) : 15;
+      // Extract resolution duration: look for "5 min" or "15 min" in title,
+      // or infer from time window like "1:45AM-2:00AM" (15 min) or "1:45AM-1:50AM" (5 min)
+      let resolutionMinutes = 15; // default
+      const durationMatch = m.question.match(/(\d+)[\s-]*min/i);
+      if (durationMatch) {
+        resolutionMinutes = parseInt(durationMatch[1], 10);
+      } else {
+        // Try to parse from time window: "1:45AM-2:00AM" format
+        const timeMatch = m.question.match(/(\d{1,2}):(\d{2})(AM|PM)\s*-\s*(\d{1,2}):(\d{2})(AM|PM)/i);
+        if (timeMatch) {
+          let startH = parseInt(timeMatch[1], 10);
+          const startM = parseInt(timeMatch[2], 10);
+          const startAmPm = timeMatch[3].toUpperCase();
+          let endH = parseInt(timeMatch[4], 10);
+          const endM = parseInt(timeMatch[5], 10);
+          const endAmPm = timeMatch[6].toUpperCase();
+          if (startAmPm === 'PM' && startH !== 12) startH += 12;
+          if (startAmPm === 'AM' && startH === 12) startH = 0;
+          if (endAmPm === 'PM' && endH !== 12) endH += 12;
+          if (endAmPm === 'AM' && endH === 12) endH = 0;
+          const diffMin = (endH * 60 + endM) - (startH * 60 + startM);
+          if (diffMin > 0 && diffMin <= 30) resolutionMinutes = diffMin;
+        }
+      }
 
-      // Fetch order book for mid price
-      const book = await fetchOrderBook(m.condition_id);
-      if (!book) continue;
+      // Get market price from Gamma outcomePrices or fetch from CLOB
+      let pMarket: number;
+      let yesDepth = 0;
+      let noDepth = 0;
+      let totalLiquidity = 0;
+      let volume24h = 0;
 
-      const pMarket = book.midPrice;
+      // Try Gamma outcomePrices first (faster, no extra API call)
+      if (m.outcomePrices) {
+        try {
+          const prices = JSON.parse(m.outcomePrices);
+          pMarket = parseFloat(prices[0] || '0.5');
+        } catch {
+          pMarket = 0.5;
+        }
+      } else {
+        pMarket = 0.5;
+      }
+
+      // Fetch CLOB order book for depth data using YES token ID
+      const yesTokenId = m.clobTokenIds[0];
+      const noTokenId = m.clobTokenIds[1];
+      const book = await fetchOrderBook(yesTokenId);
+      if (book) {
+        // Use CLOB mid price if available (more accurate than Gamma snapshot)
+        pMarket = book.midPrice;
+        yesDepth = book.yesDepth;
+        noDepth = book.noDepth;
+        totalLiquidity = book.totalLiquidity;
+        volume24h = book.volume24h;
+      }
+
       if (pMarket < 0.10 || pMarket > 0.90) continue; // Skip extreme probabilities
 
       // LMSR probability from order book quantities
-      const yesQty = book.yesDepth;
-      const noQty = book.noDepth;
-      const pLmsr = lmsrProb([yesQty, noQty], 0, config.PREDICT_POLY_LMSR_B);
+      const pLmsr = (yesDepth > 0 || noDepth > 0)
+        ? lmsrProb([yesDepth, noDepth], 0, config.PREDICT_POLY_LMSR_B)
+        : pMarket; // fallback to market price if no depth data
 
       // Bayesian update with intel signal
       const intel = intelSignals.find(s =>
@@ -177,26 +245,23 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
       const score = rewardScore({
         edge: absEdge,
         kellyFrac: Math.max(0, kellyFrac),
-        liquidity: book.totalLiquidity,
+        liquidity: totalLiquidity,
         closeDate,
-        volume: book.volume24h,
+        volume: volume24h,
       });
-
-      const yesToken = m.tokens.find(t => t.outcome === 'Yes' || t.outcome === 'YES');
-      const noToken = m.tokens.find(t => t.outcome === 'No' || t.outcome === 'NO');
 
       const reasoning = `LMSR p=${pLmsr.toFixed(4)}, market=${pMarket.toFixed(4)}, ` +
         `${intel ? `intel ${intel.direction} (${asset})` : 'no intel'}, ` +
         `edge=${(edge * 100).toFixed(1)}c, kelly=${(kellyFrac * 100).toFixed(1)}%, ` +
-        `${resolutionMinutes}min rolling market`;
+        `${resolutionMinutes}min market`;
 
       analyzed.push({
-        id: m.condition_id,
+        id: m.conditionId,
         platform: 'polymarket',
         question: m.question,
         category: 'crypto',
         asset,
-        url: `https://polymarket.com/event/${m.market_slug}`,
+        url: `https://polymarket.com/event/${m.slug}`,
         pYes: pMarket,
         pLmsr,
         pBayes,
@@ -210,8 +275,8 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
         intelAligned,
         intelSignalId,
         reasoning,
-        yesTokenId: yesToken?.token_id || '',
-        noTokenId: noToken?.token_id || '',
+        yesTokenId: yesTokenId || '',
+        noTokenId: noTokenId || '',
       });
     }
 
@@ -259,16 +324,16 @@ interface OrderBookSummary {
   bestAsk: number;
 }
 
-async function fetchOrderBook(conditionId: string): Promise<OrderBookSummary | null> {
+async function fetchOrderBook(tokenId: string): Promise<OrderBookSummary | null> {
   try {
-    const res = await fetch(`${CLOB_BASE}/book?token_id=${conditionId}`, {
+    const res = await fetch(`${CLOB_BASE}/book?token_id=${tokenId}`, {
       headers: {
         'Authorization': `Bearer ${config.POLYMARKET_API_KEY}`,
       },
     });
 
     if (!res.ok) {
-      console.warn(`[PolyScan] Order book fetch failed for ${conditionId}: ${res.status}`);
+      console.warn(`[PolyScan] Order book fetch failed for ${tokenId.slice(0, 20)}...: ${res.status}`);
       return null;
     }
 
@@ -298,7 +363,7 @@ async function fetchOrderBook(conditionId: string): Promise<OrderBookSummary | n
       bestAsk,
     };
   } catch (err) {
-    console.warn(`[PolyScan] Order book error for ${conditionId}:`, (err as Error).message);
+    console.warn(`[PolyScan] Order book error for ${tokenId.slice(0, 20)}...:`, (err as Error).message);
     return null;
   }
 }

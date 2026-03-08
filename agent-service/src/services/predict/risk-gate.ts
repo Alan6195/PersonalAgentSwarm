@@ -44,7 +44,7 @@ export const POLY_RISK_LIMITS: RiskLimits = {
   maxTotalExposurePct: 0.40,  // 40% = $20 max deployed
   dailyLossPausePct: 0.08,    // 8% = $4 daily loss pause
   drawdownPausePct: 0.15,     // 15% = $7.50 drawdown pause
-  minEdge: 0.04,              // same as Manifold
+  minEdge: 0.06,              // 6c (raised from 4c to account for taker fees)
   minBet: 0.50,               // lower min for $50 bankroll
 };
 
