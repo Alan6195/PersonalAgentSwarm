@@ -115,7 +115,7 @@ async function placeManifoldBet(
         market.platform, market.id, market.url, market.question, market.category,
         market.asset || null, direction,
         market.pYes, market.pModel, market.edge, market.kellyFrac,
-        amount, bet.probAfter || market.pYes,
+        amount, parseFloat(bet.probAfter) || market.pYes,
         market.score, market.expectedRet,
         market.intelSignalId, market.intelAligned,
         market.reasoning,
