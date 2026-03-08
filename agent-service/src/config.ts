@@ -182,10 +182,11 @@ export function validateConfig(): void {
     console.log('[Config] MANIFOLD_API_KEY not set; predict agent disabled.');
   }
 
-  if (config.POLYMARKET_API_KEY && config.POLYMARKET_WALLET_KEY) {
-    console.log(`[Config] Polymarket credentials found; 5-min scanner enabled. DRY_RUN=${config.PREDICT_POLY_DRY_RUN}, bankroll=$${config.PREDICT_POLY_STARTING_BANKROLL}, kelly=${config.PREDICT_POLY_KELLY_FRACTION}`);
+  if (config.POLYMARKET_API_KEY) {
+    const hasWallet = !!(config.POLYMARKET_WALLET_KEY);
+    console.log(`[Config] Polymarket API key found; scanner enabled. DRY_RUN=${config.PREDICT_POLY_DRY_RUN}, bankroll=$${config.PREDICT_POLY_STARTING_BANKROLL}, kelly=${config.PREDICT_POLY_KELLY_FRACTION}, wallet=${hasWallet ? 'configured' : 'not set (dry-run only)'}`);
   } else {
-    console.log('[Config] Polymarket credentials not set; Polymarket scanner disabled.');
+    console.log('[Config] POLYMARKET_API_KEY not set; Polymarket scanner disabled.');
   }
 
   console.log(`[Config] Cost guardrails: daily=$${(config.DAILY_BUDGET_LIMIT_CENTS / 100).toFixed(2)}, per-agent=$${(config.AGENT_DAILY_LIMIT_CENTS / 100).toFixed(2)}`);
