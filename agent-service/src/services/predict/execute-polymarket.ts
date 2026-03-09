@@ -519,17 +519,21 @@ async function placePolymarketOrder(
     const client = getClobClient();
 
     const tokenId = market.direction === 'YES' ? market.yesTokenId : market.noTokenId;
-    // Limit price: if buying YES, use market's YES price; if buying NO, use (1 - YES price)
-    const limitPrice = market.direction === 'YES' ? market.pYes : (1 - market.pYes);
+    const tickSize = parseFloat(market.tickSize || '0.01');
+
+    // Limit price: mid-price + 2 ticks to cross the spread and get filled immediately.
+    // These are 5-15 min markets; sitting at mid-price risks timeout. The 2-tick premium
+    // is still well within our edge (minimum 9c net edge to reach execution).
+    const midPrice = market.direction === 'YES' ? market.pYes : (1 - market.pYes);
+    const limitPrice = Math.min(midPrice + 2 * tickSize, 0.99); // cap at 99c
     // Size is number of outcome shares = USDC amount / price per share
     const size = amount / limitPrice;
 
     console.log(`[PolyExec] Placing order: BUY ${market.direction} on "${market.question.substring(0, 60)}"`);
-    console.log(`[PolyExec]   amount=$${amount.toFixed(2)}, price=${limitPrice.toFixed(4)}, size=${size.toFixed(2)} shares`);
+    console.log(`[PolyExec]   amount=$${amount.toFixed(2)}, mid=${midPrice.toFixed(4)}, limit=${limitPrice.toFixed(4)} (+2 ticks), size=${size.toFixed(2)} shares`);
     console.log(`[PolyExec]   tokenId=${tokenId.slice(0, 30)}..., negRisk=${market.negRisk}, tickSize=${market.tickSize}`);
 
     // Round price to tick size
-    const tickSize = parseFloat(market.tickSize || '0.01');
     const roundedPrice = Math.round(limitPrice / tickSize) * tickSize;
 
     // Use the official client to build, sign, and submit the order
