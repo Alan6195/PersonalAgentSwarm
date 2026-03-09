@@ -466,7 +466,8 @@ export async function handleDailyRiskReset(): Promise<string> {
 }
 
 /**
- * Resolution check: poll open positions for market resolution
+ * Resolution check: poll open positions for market resolution,
+ * redeem winning tokens, and sync bankroll to wallet.
  * Schedule: every 30 minutes (Manifold) + every 5 minutes (Polymarket)
  */
 export async function handleResolutionCheck(taskId: number): Promise<string> {
@@ -486,6 +487,27 @@ export async function handleResolutionCheck(taskId: number): Promise<string> {
     }
     if (poly.checked > 0 && poly.closed === 0) {
       parts.push(`Polymarket: ${poly.checked} open, none resolved yet`);
+    }
+
+    // Redeem winning conditional tokens (ERC-1155 -> USDC.e)
+    // Must happen AFTER reconciliation so positions are marked as closed_win first.
+    try {
+      const { redeemAllWinnings, syncBankrollToWallet } = await import('./execute-polymarket');
+      const redemption = await redeemAllWinnings();
+      if (redemption.redeemed > 0) {
+        parts.push(`Redeemed ${redemption.redeemed} wins (~$${redemption.totalUSDC.toFixed(2)})`);
+      }
+      if (redemption.errors.length > 0) {
+        console.warn(`[PredictCron] Redemption errors: ${redemption.errors.join('; ')}`);
+      }
+
+      // Sync bankroll to actual wallet balance (fixes drift from missed redemptions)
+      const walletBalance = await syncBankrollToWallet();
+      if (walletBalance !== null && parts.length > 0) {
+        parts.push(`Wallet: $${walletBalance.toFixed(2)}`);
+      }
+    } catch (err: any) {
+      console.error('[PredictCron] Redemption/sync error:', err.message);
     }
   }
 
@@ -672,7 +694,12 @@ export async function handleDailySummary(): Promise<string> {
 }
 
 async function getPolyBankroll(): Promise<number> {
-  // Try daily risk state first
+  // Use actual on-chain wallet balance as source of truth.
+  // daily_risk_state drifts when redemptions are missed or trades settle unexpectedly.
+  const balance = await getUSDCBalance();
+  if (balance !== null && balance >= 0.01) return balance;
+
+  // Fallback to daily risk state if wallet check fails
   const todayStr = new Date().toISOString().split('T')[0];
   const risk = await queryOne<any>(
     `SELECT current_bankroll FROM daily_risk_state WHERE date = $1 AND platform = 'polymarket'`,
@@ -680,10 +707,6 @@ async function getPolyBankroll(): Promise<number> {
   );
 
   if (risk) return parseFloat(risk.current_bankroll);
-
-  // Try USDC balance
-  const balance = await getUSDCBalance();
-  if (balance !== null) return balance;
 
   // Default
   return config.PREDICT_POLY_STARTING_BANKROLL;

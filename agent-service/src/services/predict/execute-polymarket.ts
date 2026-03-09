@@ -14,7 +14,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { createWalletClient, createPublicClient, http, parseAbi, maxUint256 } from 'viem';
 import { polygon } from 'viem/chains';
 import { config, isPolyDryRun } from '../../config';
-import { query } from '../../db';
+import { query, queryOne } from '../../db';
 import { validateTrade, recordTradeOpened, type TradeCandidate } from './risk-gate';
 import type { PolyCandidate } from './scan-polymarket';
 
@@ -35,11 +35,22 @@ const BRIDGED_USDCE = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174' as `0x${strin
 // Uniswap V3 SwapRouter02 on Polygon
 const SWAP_ROUTER = '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45' as `0x${string}`;
 
+// Gnosis Conditional Token Framework (CTF) contract for redemption
+// After a market resolves, winning ERC-1155 tokens must be redeemed via this contract
+// to convert back to USDC.e collateral. Redemption is NOT automatic.
+const CTF_CONTRACT = '0x4D97DCd97eC945f40cF65F87097ACe5EA0476045' as `0x${string}`;
+
 // ERC20 ABI for approval checks and transactions
 const ERC20_ABI = parseAbi([
   'function allowance(address owner, address spender) view returns (uint256)',
   'function approve(address spender, uint256 amount) returns (bool)',
   'function balanceOf(address account) view returns (uint256)',
+]);
+
+// CTF ABI for ERC-1155 balance checks and position redemption
+const CTF_ABI = parseAbi([
+  'function balanceOf(address owner, uint256 id) view returns (uint256)',
+  'function redeemPositions(address collateralToken, bytes32 parentCollectionId, bytes32 conditionId, uint256[] indexSets)',
 ]);
 
 // Uniswap V3 SwapRouter02 ABI (just the function we need)
@@ -941,6 +952,245 @@ export async function fetchCurrentMidPrice(tokenId: string): Promise<number | nu
     console.warn(`[PolyExec] Failed to fetch midpoint: ${err.message}`);
     return null;
   }
+}
+
+// ── Token Redemption ──────────────────────────────────────────────────
+
+/**
+ * Redeem all winning conditional tokens back to USDC.e.
+ *
+ * After a Polymarket market resolves, winning ERC-1155 tokens sit in the wallet
+ * until redeemPositions() is called on the CTF contract. Without this call,
+ * USDC.e is NOT returned and the wallet balance stays depleted.
+ *
+ * Flow per conditionId:
+ * 1. Fetch CLOB market data to verify resolution and get token_ids
+ * 2. Check on-chain ERC-1155 balance for the winning token
+ * 3. Call CTF.redeemPositions to burn tokens and receive USDC.e
+ * 4. Mark DB positions as redeemed
+ */
+export async function redeemAllWinnings(): Promise<{
+  redeemed: number;
+  totalUSDC: number;
+  errors: string[];
+}> {
+  const result = { redeemed: 0, totalUSDC: 0, errors: [] as string[] };
+
+  if (!config.POLYMARKET_WALLET_KEY || !config.POLYGON_RPC_URL) {
+    result.errors.push('Wallet or RPC not configured');
+    return result;
+  }
+
+  // Get unredeemed winning positions (metadata.redeemed is null or missing)
+  const positions = await query<any>(
+    `SELECT id, market_id, direction, bet_size, fill_price
+     FROM market_positions
+     WHERE platform = 'polymarket'
+       AND status = 'closed_win'
+       AND (metadata IS NULL OR metadata = '{}'::jsonb OR metadata->>'redeemed' IS NULL)
+     ORDER BY id`
+  );
+
+  if (positions.length === 0) {
+    return result;
+  }
+
+  console.log(`[PolyRedeem] Found ${positions.length} unredeemed winning positions`);
+
+  const account = privateKeyToAccount(config.POLYMARKET_WALLET_KEY as `0x${string}`);
+  const walletClient = createWalletClient({
+    account,
+    chain: polygon,
+    transport: http(config.POLYGON_RPC_URL),
+  });
+  const publicClient = createPublicClient({
+    chain: polygon,
+    transport: http(config.POLYGON_RPC_URL),
+  });
+
+  // Group by conditionId to avoid duplicate redemption calls
+  // (e.g., positions 22 and 23 share the same market)
+  const byCondition = new Map<string, typeof positions>();
+  for (const pos of positions) {
+    const existing = byCondition.get(pos.market_id) || [];
+    existing.push(pos);
+    byCondition.set(pos.market_id, existing);
+  }
+
+  for (const [conditionId, condPositions] of byCondition) {
+    try {
+      // Fetch CLOB market data to verify resolution
+      const res = await fetch(`https://clob.polymarket.com/markets/${conditionId}`);
+      if (!res.ok) {
+        result.errors.push(`${conditionId.substring(0, 16)}: CLOB API error ${res.status}`);
+        continue;
+      }
+
+      const market = await res.json() as any;
+      const tokens = market.tokens || [];
+      const negRisk = market.neg_risk === true;
+
+      // Check that a winner is declared
+      const winnerToken = tokens.find((t: any) => t.winner === true);
+      if (!winnerToken) {
+        // Not resolved on-chain yet; skip
+        console.log(`[PolyRedeem] ${conditionId.substring(0, 16)}: no winner declared yet, skipping`);
+        continue;
+      }
+
+      if (negRisk) {
+        // neg_risk markets need NegRiskAdapter redemption (different contract)
+        // For now, skip and log; we'll implement if we encounter these
+        result.errors.push(`${conditionId.substring(0, 16)}: neg_risk market, skipping (not yet implemented)`);
+        continue;
+      }
+
+      // Determine which token we hold based on our direction
+      // YES = "Up" outcome, NO = "Down" outcome
+      const sampleDir = condPositions[0].direction;
+      const ourOutcome = sampleDir === 'YES' ? 'Up' : 'Down';
+      const ourToken = tokens.find((t: any) => t.outcome === ourOutcome);
+
+      if (!ourToken || !ourToken.token_id) {
+        result.errors.push(`${conditionId.substring(0, 16)}: no matching token found for ${ourOutcome}`);
+        continue;
+      }
+
+      const tokenId = BigInt(ourToken.token_id);
+
+      // Check on-chain ERC-1155 balance
+      const balance = await publicClient.readContract({
+        address: CTF_CONTRACT,
+        abi: CTF_ABI,
+        functionName: 'balanceOf',
+        args: [account.address, tokenId],
+      });
+
+      if (balance === 0n) {
+        console.log(`[PolyRedeem] ${conditionId.substring(0, 16)}: no tokens held (balance=0), marking redeemed`);
+        for (const pos of condPositions) {
+          await markPositionRedeemed(pos.id);
+        }
+        continue;
+      }
+
+      // Calculate expected USDC.e payout (shares * $1 per winning share)
+      const balanceShares = Number(balance) / 1e6; // CTF uses 6 decimals for USDC.e collateral
+      console.log(`[PolyRedeem] ${conditionId.substring(0, 16)}: redeeming ${balanceShares.toFixed(4)} shares (raw: ${balance})`);
+
+      // Call CTF.redeemPositions
+      // parentCollectionId = bytes32(0) for top-level conditions
+      // indexSets = [1, 2] for binary markets (outcome 0 and outcome 1)
+      const parentCollectionId = '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`;
+
+      const hash = await walletClient.writeContract({
+        address: CTF_CONTRACT,
+        abi: CTF_ABI,
+        functionName: 'redeemPositions',
+        args: [
+          BRIDGED_USDCE,
+          parentCollectionId,
+          conditionId as `0x${string}`,
+          [1n, 2n],
+        ],
+      });
+
+      console.log(`[PolyRedeem] Tx sent: ${hash}`);
+
+      // Wait for confirmation
+      const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 30_000 });
+
+      if (receipt.status === 'success') {
+        result.redeemed += condPositions.length;
+        result.totalUSDC += balanceShares;
+
+        for (const pos of condPositions) {
+          await markPositionRedeemed(pos.id, hash);
+        }
+
+        console.log(`[PolyRedeem] SUCCESS: ${condPositions.length} position(s), ~$${balanceShares.toFixed(2)} redeemed. tx: ${hash}`);
+      } else {
+        result.errors.push(`${conditionId.substring(0, 16)}: transaction reverted`);
+        console.error(`[PolyRedeem] Transaction reverted: ${hash}`);
+      }
+
+      // Small delay between redemption calls to avoid nonce issues
+      await sleep(3000);
+    } catch (err: any) {
+      const msg = err.message?.substring(0, 150) || 'unknown error';
+      result.errors.push(`${conditionId.substring(0, 16)}: ${msg}`);
+      console.error(`[PolyRedeem] Error redeeming ${conditionId.substring(0, 16)}:`, msg);
+    }
+  }
+
+  if (result.redeemed > 0 || result.errors.length > 0) {
+    console.log(
+      `[PolyRedeem] Done: ${result.redeemed} redeemed (~$${result.totalUSDC.toFixed(2)}), ${result.errors.length} errors`
+    );
+  }
+
+  return result;
+}
+
+/**
+ * Mark a position as redeemed in the metadata JSONB column.
+ */
+async function markPositionRedeemed(positionId: number, txHash?: string): Promise<void> {
+  const meta = txHash
+    ? { redeemed: true, redeemTx: txHash, redeemedAt: new Date().toISOString() }
+    : { redeemed: true, redeemedAt: new Date().toISOString() };
+
+  await query(
+    `UPDATE market_positions
+     SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
+     WHERE id = $2`,
+    [JSON.stringify(meta), positionId]
+  );
+}
+
+// ── Bankroll Sync ─────────────────────────────────────────────────────
+
+/**
+ * Sync the daily_risk_state bankroll to the actual on-chain USDC.e balance.
+ * Call this after redemption or whenever the tracked bankroll drifts from reality.
+ * Returns the actual wallet balance, or null if check failed.
+ */
+export async function syncBankrollToWallet(): Promise<number | null> {
+  const balance = await getUSDCBalance();
+  if (balance === null) {
+    console.warn('[PolySync] Could not fetch wallet balance');
+    return null;
+  }
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  const existing = await queryOne<any>(
+    `SELECT id, current_bankroll FROM daily_risk_state WHERE date = $1 AND platform = 'polymarket'`,
+    [todayStr]
+  );
+
+  if (existing) {
+    const oldBankroll = parseFloat(existing.current_bankroll);
+    if (Math.abs(oldBankroll - balance) > 0.01) {
+      console.log(`[PolySync] Bankroll drift: tracked=$${oldBankroll.toFixed(2)}, actual=$${balance.toFixed(2)}. Syncing.`);
+      await query(
+        `UPDATE daily_risk_state
+         SET current_bankroll = $1, peak_bankroll = GREATEST(peak_bankroll, $1), updated_at = NOW()
+         WHERE id = $2`,
+        [balance, existing.id]
+      );
+    }
+  } else {
+    // Create today's risk state with actual balance
+    await query(
+      `INSERT INTO daily_risk_state (date, platform, starting_bankroll, current_bankroll, peak_bankroll)
+       VALUES ($1, 'polymarket', $2, $2, $2)
+       ON CONFLICT (date, platform) DO UPDATE SET current_bankroll = $2, peak_bankroll = GREATEST(daily_risk_state.peak_bankroll, $2)`,
+      [todayStr, balance]
+    );
+  }
+
+  console.log(`[PolySync] Bankroll synced to wallet: $${balance.toFixed(2)}`);
+  return balance;
 }
 
 function sleep(ms: number): Promise<void> {
