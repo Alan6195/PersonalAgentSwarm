@@ -796,8 +796,24 @@ async function writeSharedSignals(
   for (const [asset, signal] of assetSignals) {
     if (written >= 10) break; // up to 10 signals (4 assets * possible multiple)
 
-    const direction = signal.totalSentiment > 0 ? 'bullish' : signal.totalSentiment < 0 ? 'bearish' : 'neutral';
-    const strength = Math.min(signal.count / 5, 1.0); // reach 1.0 at 5 tweets (was /10, too conservative)
+    // Require at least 10 tweets to write a signal (5 was too few, created noise)
+    if (signal.count < 10) {
+      console.log(`[XIntelligence] ${asset}: insufficient tweets (${signal.count}/10), skipping signal`);
+      continue;
+    }
+
+    // Strength = average sentiment magnitude, not just count
+    // This prevents 5 weakly-negative tweets from creating max-bearish signal
+    const avgSentiment = signal.totalSentiment / signal.count;
+    const strength = Math.abs(avgSentiment); // 0.0-1.0 based on actual magnitude
+
+    // Minimum threshold: don't write weak/noisy signals
+    if (strength < 0.35) {
+      console.log(`[XIntelligence] ${asset}: signal too weak (avg=${avgSentiment.toFixed(2)}, str=${strength.toFixed(2)}), skipping`);
+      continue;
+    }
+
+    const direction = avgSentiment < 0 ? 'bearish' : avgSentiment > 0 ? 'bullish' : 'neutral';
 
     // Alert flag: strong macro signal (bearish OR bullish) should trigger immediate scan
     const alertImmediately = signal.isMacro && direction !== 'neutral' && strength >= 0.70;

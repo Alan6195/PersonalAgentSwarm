@@ -5,7 +5,8 @@
  * Computes a decayed, aggregated sentiment summary per asset for
  * use in the Polymarket scanner's Bayesian prior update.
  *
- * Signal decay: full weight < 1 hour, half weight 1-4 hours, zero > 4 hours.
+ * Signal decay: full weight < 10 min, linear decay 10-30 min, zero > 30 min.
+ * Tightened from 4-hour window because 5/15-min crypto markets need fresh signals.
  */
 
 import { query } from '../../db';
@@ -22,7 +23,8 @@ export interface IntelSummary {
 /**
  * Get aggregated intel summary for a specific crypto asset.
  * Pulls from shared_signals where topic mentions the asset.
- * Signals older than 4 hours are ignored; remaining signals are decayed.
+ * Only signals from the last 30 minutes are considered (tightened from 4 hours).
+ * Decay: full weight < 10min, linear decay 10-30min, zero after 30min.
  */
 export async function getIntelSummary(asset: string): Promise<IntelSummary | null> {
   const rows = await query<any>(
@@ -32,7 +34,7 @@ export async function getIntelSummary(asset: string): Promise<IntelSummary | nul
      FROM shared_signals
      WHERE
        (LOWER(topic) LIKE $1 OR LOWER(topic) LIKE $2)
-       AND created_at > NOW() - INTERVAL '4 hours'
+       AND created_at > NOW() - INTERVAL '30 minutes'
      ORDER BY created_at DESC`,
     [`%${asset.toLowerCase()}%`, `%${assetFull(asset).toLowerCase()}%`]
   );
@@ -47,13 +49,11 @@ export async function getIntelSummary(asset: string): Promise<IntelSummary | nul
     const ageMinutes = parseFloat(row.age_minutes);
     const rawStrength = parseFloat(row.strength || '0.5');
 
-    // Decay: linear from 1.0 at 0min to 0.5 at 60min to 0.0 at 240min
-    let decayedStrength: number;
-    if (ageMinutes < 60) {
-      decayedStrength = rawStrength * (1 - ageMinutes / 120);
-    } else {
-      decayedStrength = rawStrength * Math.max(0, 1 - (ageMinutes - 60) / 360);
-    }
+    // Decay: full weight 0-10min, linear decay 10-30min, zero after 30min
+    // Tightened from old 4-hour window for 5/15-min crypto markets
+    const decayedStrength = ageMinutes < 10
+      ? rawStrength
+      : rawStrength * Math.max(0, 1 - (ageMinutes - 10) / 20);
 
     if (decayedStrength <= 0) continue;
 

@@ -312,7 +312,7 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
       const hasIntelSignal = intelSummary &&
         intelSummary.signalCount > 0 &&
         Math.abs(intelSummary.netSentiment) > 0.2 &&
-        intelSummary.freshestSignalAge < 120;
+        intelSummary.freshestSignalAge < 30; // 30 min max (tightened from 120 for 5/15-min markets)
 
       if (hasIntelSignal) {
         const intelLikelihood = computeIntelLikelihood(intelSummary!, minutes);
