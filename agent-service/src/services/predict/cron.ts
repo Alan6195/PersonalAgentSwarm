@@ -12,6 +12,7 @@ import { executePolymarketTrade, getUSDCBalance } from './execute-polymarket';
 import { checkEdgeCandidateNotification } from './telegram';
 import { resetDailyRisk } from './risk-gate';
 import { runWeeklyReview } from './learn';
+import { priceFeed } from './price-feed';
 import { query, queryOne } from '../../db';
 import { config, isPolyDryRun } from '../../config';
 
@@ -161,6 +162,19 @@ export async function handleHypothesisReview(taskId: number): Promise<string> {
 export async function handlePolymarketScan(taskId: number): Promise<string> {
   if (!config.POLYMARKET_API_KEY) {
     return 'POLYMARKET_API_KEY not configured. Scan skipped.';
+  }
+
+  // Momentum gate: only scan when at least one asset shows meaningful momentum.
+  // Flat markets (all neutral) have no edge — scanning them wastes API calls
+  // and produces trades with thin margins that lose to taker fees.
+  const signals = ['BTC', 'ETH', 'SOL', 'XRP'].map(a => priceFeed.getSignal(a));
+  const hasAnyMomentum = signals.some(s =>
+    s && s.momentum !== 'neutral' && s.momentumStrength > 0.3
+  );
+
+  if (!hasAnyMomentum) {
+    console.log('[PolyScan] Skipped — all assets neutral, no momentum signal');
+    return 'Scan skipped — no momentum signal. All assets neutral.';
   }
 
   // Fetch and filter markets
