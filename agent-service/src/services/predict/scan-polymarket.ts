@@ -22,6 +22,7 @@ import { query } from '../../db';
 import { bayesUpdate, fractionalKelly, rewardScore } from './model';
 import { priceFeed, AssetSignal } from './price-feed';
 import { getIntelSummary, IntelSummary } from './intel-signal';
+import type { ActiveMarket } from './order-flow';
 
 const GAMMA_BASE = 'https://gamma-api.polymarket.com';
 const CLOB_BASE = 'https://clob.polymarket.com';
@@ -598,4 +599,99 @@ async function getPolyBankroll(): Promise<number> {
 
   // Default starting bankroll from config
   return config.PREDICT_POLY_STARTING_BANKROLL;
+}
+
+// ── Order Flow Market Discovery ─────────────────────────────────────────
+// Lightweight discovery for OrderFlowService. Returns ActiveMarket[] with
+// token IDs, window end times, and mid prices. Runs every 30 min via cron.
+// Does NOT do analysis, signals, or trading; just discovers which markets
+// the WebSocket should be watching.
+
+/**
+ * Discover active 5/15-minute Up/Down crypto markets for the order flow scanner.
+ * Returns ActiveMarket[] compatible with OrderFlowService.start() / updateMarkets().
+ */
+export async function discoverActiveUpDownMarkets(): Promise<ActiveMarket[]> {
+  console.log('[MarketDiscovery] Discovering active Up/Down markets for order flow scanner');
+
+  const markets: ActiveMarket[] = [];
+  const BATCH_SIZE = 8;
+
+  // Build slug list (same logic as scanPolymarket but we only need basic market data)
+  const slugsToCheck: { slug: string; asset: string; minutes: number }[] = [];
+  for (const asset of ASSET_SLUGS) {
+    for (const dur of DURATIONS) {
+      const timestamps = getWindowTimestamps(dur.minutes, WINDOWS_TO_CHECK);
+      for (const ts of timestamps) {
+        slugsToCheck.push({
+          slug: `${asset.slug}-updown-${dur.slug}-${ts}`,
+          asset: asset.name,
+          minutes: dur.minutes,
+        });
+      }
+    }
+  }
+
+  for (let i = 0; i < slugsToCheck.length; i += BATCH_SIZE) {
+    const batch = slugsToCheck.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(async (s) => {
+        const res = await fetch(`${GAMMA_BASE}/events/slug/${s.slug}`);
+        if (!res.ok) {
+          const res2 = await fetch(`${GAMMA_BASE}/markets?slug=${s.slug}`);
+          if (!res2.ok) return null;
+          const mkts = await res2.json() as GammaMarket[];
+          if (mkts.length === 0) return null;
+          return { markets: mkts, slug: s.slug, asset: s.asset, minutes: s.minutes };
+        }
+        const event = await res.json() as GammaEvent;
+        if (!event.markets || event.markets.length === 0) return null;
+        return { markets: event.markets, slug: s.slug, asset: s.asset, minutes: s.minutes };
+      })
+    );
+
+    for (const result of results) {
+      if (result.status !== 'fulfilled' || !result.value) continue;
+      const { markets: gammaMarkets, slug, asset, minutes } = result.value;
+
+      for (const m of gammaMarkets) {
+        const tokenIds = parseClobTokenIds(m.clobTokenIds);
+        if (!m.active || m.closed || tokenIds.length < 2) continue;
+
+        const endTime = new Date(m.endDate).getTime();
+        const minutesRemaining = (endTime - Date.now()) / 60_000;
+        // Only include markets with > 2 minutes remaining
+        if (minutesRemaining < 2) continue;
+
+        // Get mid price from Gamma outcomePrices
+        let midPrice = 0.5;
+        if (m.outcomePrices) {
+          try {
+            const prices = JSON.parse(m.outcomePrices);
+            midPrice = parseFloat(prices[0] || '0.5');
+          } catch { /* default 0.5 */ }
+        }
+
+        markets.push({
+          conditionId: m.conditionId,
+          asset,
+          windowMinutes: minutes,
+          question: m.question,
+          midPrice,
+          endTime,
+          yesTokenId: tokenIds[0],
+          noTokenId: tokenIds[1],
+          eventSlug: slug,
+        });
+      }
+    }
+  }
+
+  console.log(`[MarketDiscovery] Found ${markets.length} active markets for order flow`);
+  for (const m of markets.slice(0, 6)) {
+    const minsLeft = ((m.endTime - Date.now()) / 60_000).toFixed(1);
+    console.log(`[MarketDiscovery]   ${m.asset} ${m.windowMinutes}m: "${m.question.substring(0, 50)}" (${minsLeft}min left)`);
+  }
+
+  return markets;
 }

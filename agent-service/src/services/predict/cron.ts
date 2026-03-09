@@ -7,13 +7,14 @@
 
 import { scanManifold, analyzeMarkets, validateModelAccess } from './scan';
 import { executeTrade, reconcilePositions, getCurrentBankroll, getManifoldBalance } from './execute';
-import { scanPolymarket } from './scan-polymarket';
+import { scanPolymarket, discoverActiveUpDownMarkets } from './scan-polymarket';
 import { executePolymarketTrade, getUSDCBalance, reconcilePolymarketPositions } from './execute-polymarket';
 import { checkEdgeCandidateNotification } from './telegram';
-import { resetDailyRisk } from './risk-gate';
+import { resetDailyRisk, validateTrade, recordTradeOpened } from './risk-gate';
 import { runWeeklyReview } from './learn';
 import { priceFeed } from './price-feed';
 import { getIntelSummary } from './intel-signal';
+import { orderFlowService, type OrderFlowSignal } from './order-flow';
 import { query, queryOne } from '../../db';
 import { config, isPolyDryRun } from '../../config';
 
@@ -75,6 +76,228 @@ export function stopMomentumWatcher(): void {
     momentumWatcherInterval = null;
     console.log('[MomentumWatch] Stopped');
   }
+}
+
+// ── Order Flow Scanner (Loop 3) ─────────────────────────────────────────────
+// Event-driven: OrderFlowService fires signals when OFI crosses thresholds
+// near window boundaries. The signal handler runs risk gate + execution.
+// Market discovery runs every 30 min via cron to refresh the watch list.
+
+let orderFlowStarted = false;
+let telegramNotifyFn: ((text: string) => Promise<void>) | null = null;
+
+/**
+ * Set the Telegram notifier for order flow signals.
+ * Called once during startup from cron-scheduler.ts.
+ */
+export function setOrderFlowTelegramNotifier(notifier: (text: string) => Promise<void>): void {
+  telegramNotifyFn = notifier;
+}
+
+/**
+ * Start the order flow scanner: discover markets and connect WebSocket.
+ * Called once during agent startup. Subsequent market updates happen via
+ * the 30-min discovery cron.
+ */
+export async function startOrderFlowScanner(): Promise<string> {
+  if (!config.POLYMARKET_API_KEY) {
+    return 'POLYMARKET_API_KEY not configured. Order flow scanner disabled.';
+  }
+
+  if (orderFlowStarted) {
+    return 'Order flow scanner already running.';
+  }
+
+  // Wire signal handler: fires when OFI crosses threshold at window boundary
+  orderFlowService.setSignalHandler(async (signal: OrderFlowSignal) => {
+    try {
+      await handleOrderFlowSignal(signal);
+    } catch (err: any) {
+      console.error('[OrderFlow] Signal handler error:', err.message);
+    }
+  });
+
+  // Discover initial markets
+  const markets = await discoverActiveUpDownMarkets();
+  if (markets.length === 0) {
+    console.log('[OrderFlow] No active markets found. WebSocket will start on next discovery cycle.');
+    orderFlowStarted = true;
+    return 'Order flow scanner started (no active markets yet, waiting for discovery).';
+  }
+
+  await orderFlowService.start(markets);
+  orderFlowStarted = true;
+
+  return `Order flow scanner started: watching ${markets.length} markets via WebSocket.`;
+}
+
+/**
+ * Stop the order flow scanner. Called on graceful shutdown.
+ */
+export function stopOrderFlowScanner(): void {
+  orderFlowService.stop();
+  orderFlowStarted = false;
+  console.log('[OrderFlow] Scanner stopped');
+}
+
+/**
+ * Handle an order flow signal from the WebSocket scanner.
+ * Runs risk gate, then executes trade (or dry-run logs).
+ */
+async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
+  if (!signal.entryDirection) return;
+
+  const isDryRun = isPolyDryRun();
+  const mode = isDryRun ? 'DRY RUN' : 'LIVE';
+
+  console.log(
+    `[OrderFlow] ${mode} Signal: ${signal.asset} ${signal.entryDirection} ` +
+    `OFI60=${signal.ofi60s.toFixed(3)} str=${signal.signalStrength.toFixed(2)} ` +
+    `large=${signal.largeTradeDetected}`
+  );
+
+  // Get bankroll
+  const bankroll = await getPolyBankroll();
+
+  // Compute bet size: 5% max * signal strength as Kelly proxy
+  // Signal strength 0.4-1.0 maps to 8-20% of max position (conservative)
+  const kellyProxy = Math.min(0.20, signal.signalStrength * 0.20);
+  const betSize = Math.max(0.50, Math.min(bankroll * kellyProxy, bankroll * 0.05));
+
+  // Model probability estimate from OFI:
+  // OFI of +0.3 suggests ~57% chance of Up outcome
+  // OFI of +0.5 suggests ~62% chance
+  const ofiToProbShift = signal.ofi60s * 0.25; // max +/- 25% shift from 50%
+  const pModel = signal.entryDirection === 'YES'
+    ? Math.min(0.75, Math.max(0.25, 0.50 + ofiToProbShift))
+    : Math.min(0.75, Math.max(0.25, 0.50 - ofiToProbShift));
+
+  // Risk gate check
+  const riskCheck = await validateTrade({
+    platform: 'polymarket',
+    category: 'crypto',
+    positionSizePct: betSize / bankroll,
+    betSize,
+    edge: signal.signalStrength * 0.15, // map signal strength to edge estimate
+    expectedReturn: signal.signalStrength * 0.10,
+    pModel,
+    momentumStrength: signal.signalStrength, // OFI strength acts as momentum proxy
+  }, bankroll);
+
+  if (!riskCheck.approved) {
+    console.log(`[OrderFlow] Risk gate BLOCKED: ${riskCheck.rejectionReason}`);
+    return;
+  }
+
+  if (isDryRun) {
+    console.log(
+      `[OrderFlow] DRY RUN: Would ${signal.entryDirection} on "${signal.question.substring(0, 60)}" ` +
+      `$${betSize.toFixed(2)} | OFI=${(signal.ofi60s * 100).toFixed(1)}% | str=${(signal.signalStrength * 100).toFixed(0)}%`
+    );
+
+    // Log dry-run signal to Telegram
+    if (telegramNotifyFn) {
+      try {
+        await telegramNotifyFn(
+          `[DRY RUN] ORDER FLOW SIGNAL\n` +
+          `${signal.asset} ${signal.entryDirection}\n` +
+          `OFI: ${(signal.ofi60s * 100).toFixed(1)}% | Strength: ${(signal.signalStrength * 100).toFixed(0)}%\n` +
+          `Size: $${betSize.toFixed(2)} | Large trade: ${signal.largeTradeDetected ? 'yes' : 'no'}`
+        );
+      } catch { /* non-critical */ }
+    }
+    return;
+  }
+
+  // Live execution via CLOB client
+  try {
+    const { executePolymarketTrade } = await import('./execute-polymarket');
+
+    // Build a PolyCandidate-like object for the existing execution pipeline
+    const candidate = {
+      id: signal.conditionId,
+      platform: 'polymarket' as const,
+      question: signal.question,
+      category: 'crypto',
+      asset: signal.asset,
+      url: '',
+      pYes: signal.midPrice,
+      pLmsr: signal.midPrice,
+      pBayes: pModel,
+      edge: signal.signalStrength * 0.15,
+      direction: signal.entryDirection as 'YES' | 'NO',
+      betAmount: betSize,
+      kellyFrac: kellyProxy,
+      expectedRet: signal.signalStrength * 0.10,
+      score: signal.signalStrength,
+      resolutionMinutes: signal.windowMinutes,
+      intelAligned: false,
+      intelSignalId: null,
+      reasoning: `Order flow signal: OFI60=${signal.ofi60s.toFixed(3)}, strength=${signal.signalStrength.toFixed(2)}, large_trade=${signal.largeTradeDetected}`,
+      yesTokenId: signal.yesTokenId,
+      noTokenId: signal.noTokenId,
+      yesDepth: 0,
+      noDepth: 0,
+      totalLiquidity: 0,
+      volume24h: 0,
+      pAfterMomentum: pModel,
+      priceMomentum: null,
+      priceReturn5m: null,
+      momentumStrength: signal.signalStrength,
+      intelSentiment: null,
+      intelSignalCount: null,
+      grossEdge: signal.signalStrength * 0.15,
+      netEdge: signal.signalStrength * 0.12,
+      takerFeePct: 0.025,
+      conditionId: signal.conditionId,
+      negRisk: false,
+      tickSize: '0.01',
+      minOrderSize: 5,
+    };
+
+    const result = await executePolymarketTrade(candidate, bankroll);
+
+    if (result.success) {
+      if (telegramNotifyFn) {
+        try {
+          await telegramNotifyFn(
+            `ORDER FLOW TRADE\n` +
+            `${signal.asset} ${signal.entryDirection}\n` +
+            `OFI: ${(signal.ofi60s * 100).toFixed(1)}% | Strength: ${(signal.signalStrength * 100).toFixed(0)}%\n` +
+            `Size: $${betSize.toFixed(2)} | Large trade: ${signal.largeTradeDetected ? 'yes' : 'no'}`
+          );
+        } catch { /* non-critical */ }
+      }
+    }
+  } catch (err: any) {
+    console.error(`[OrderFlow] Execution error: ${err.message}`);
+  }
+}
+
+/**
+ * Market discovery handler: refresh the order flow scanner's watch list.
+ * Schedule: every 30 minutes via cron.
+ */
+export async function handleMarketDiscovery(): Promise<string> {
+  if (!config.POLYMARKET_API_KEY) {
+    return 'POLYMARKET_API_KEY not configured. Discovery skipped.';
+  }
+
+  const markets = await discoverActiveUpDownMarkets();
+
+  if (!orderFlowStarted && markets.length > 0) {
+    // First discovery cycle: start the scanner
+    await orderFlowService.start(markets);
+    orderFlowStarted = true;
+    return `Market discovery: started order flow scanner with ${markets.length} markets.`;
+  }
+
+  if (markets.length > 0) {
+    await orderFlowService.updateMarkets(markets);
+  }
+
+  const status = orderFlowService.getStatus();
+  return `Market discovery: ${markets.length} active markets. WebSocket ${status.connected ? 'connected' : 'disconnected'}, tracking ${status.tradesTracked} trades.`;
 }
 
 /**

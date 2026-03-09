@@ -6,7 +6,7 @@ import { startScheduler, stopScheduler, setCronNotifier } from './services/cron-
 import { setProgressNotifier } from './agents/router';
 import { setBudgetAlertNotifier } from './services/cost-tracker';
 import { priceFeed } from './services/predict/price-feed';
-import { startMomentumWatcher, stopMomentumWatcher } from './services/predict/cron';
+import { startMomentumWatcher, stopMomentumWatcher, startOrderFlowScanner, stopOrderFlowScanner, setOrderFlowTelegramNotifier } from './services/predict/cron';
 
 async function main(): Promise<void> {
   console.log('[Agent Service] Starting...');
@@ -87,6 +87,16 @@ async function main(): Promise<void> {
     );
   });
 
+  // 8c. Start order flow scanner (Loop 3): real-time WebSocket OFI detection.
+  // Discovers active markets, connects to Polymarket CLOB WebSocket, fires
+  // signals when order flow imbalance crosses thresholds near window boundaries.
+  setOrderFlowTelegramNotifier(telegramNotifier);
+  startOrderFlowScanner().then(msg => {
+    console.log(`[Agent Service] ${msg}`);
+  }).catch(err => {
+    console.error('[Agent Service] Order flow scanner startup failed:', err.message);
+  });
+
   // 9. Start cron scheduler (includes */15 Polymarket scan as heartbeat fallback)
   await startScheduler();
 
@@ -95,6 +105,7 @@ async function main(): Promise<void> {
     console.log('[Agent Service] Shutting down...');
     stopScheduler();
     stopMomentumWatcher();
+    stopOrderFlowScanner();
     priceFeed.stop();
     bot.stopPolling();
     webhookServer.close();

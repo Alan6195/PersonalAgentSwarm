@@ -549,6 +549,22 @@ async function runJob(job: CronJob): Promise<void> {
       return;
     }
 
+    // Predict Market Discovery: refresh order flow scanner market watch list
+    if (job.name === 'Predict Market Discovery') {
+      console.log('[Cron] Running Predict Market Discovery');
+      const { handleMarketDiscovery } = await import('./predict/cron');
+      const discoverySummary = await handleMarketDiscovery();
+      const durationMs = Date.now() - startTime;
+
+      await query(`UPDATE cron_runs SET status = 'success', duration_ms = $1, output_summary = $2, completed_at = NOW() WHERE id = $3`, [durationMs, discoverySummary.substring(0, 2000), run.id]);
+      const nextRun = calculateNextRun(job.schedule);
+      await query(`UPDATE cron_jobs SET last_status = 'success', last_run_at = NOW(), next_run_at = $1, last_duration_ms = $2, run_count = run_count + 1, updated_at = NOW() WHERE id = $3`, [nextRun, durationMs, job.id]);
+      await taskManager.completeTask(task.id, { content: discoverySummary, tokensUsed: 0, costCents: 0, durationMs });
+
+      console.log(`[Cron] Predict Market Discovery completed (${durationMs}ms): ${discoverySummary}`);
+      return;
+    }
+
     // Predict Daily Summary: aggregate stats, send to Telegram
     if (job.name === 'Predict Daily Summary') {
       console.log('[Cron] Running Predict Daily Summary');
