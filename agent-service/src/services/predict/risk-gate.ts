@@ -44,7 +44,7 @@ export const POLY_RISK_LIMITS: RiskLimits = {
   maxTotalExposurePct: 0.40,  // 40% = $20 max deployed
   dailyLossPausePct: 0.08,    // 8% = $4 daily loss pause
   drawdownPausePct: 0.15,     // 15% = $7.50 drawdown pause
-  minEdge: 0.06,              // 6c (raised from 4c to account for taker fees)
+  minEdge: 0.09,              // 9c net edge (fees subtracted before this check)
   minBet: 0.50,               // lower min for $50 bankroll
 };
 
@@ -100,7 +100,7 @@ export async function validateTrade(candidate: TradeCandidate, bankroll: number)
     min_bet: betSize >= limits.minBet,
     max_position: betSize <= bankroll * limits.maxPositionPct,
     expected_return_positive: er > 0,
-    var_within_limit: var95 > -0.10,
+    var_within_limit: var95 > -0.35,
     daily_loss_ok: Math.abs(today.daily_loss) < bankroll * limits.dailyLossPausePct,
     drawdown_ok: mdd < limits.drawdownPausePct,
     category_exposure_ok: (categoryExposure + betSize) <= bankroll * limits.maxCategoryPct,
@@ -113,7 +113,7 @@ export async function validateTrade(candidate: TradeCandidate, bankroll: number)
     console.error(`[RiskGate] REJECTED [${platform}]: edge ${edge.toFixed(4)} < ${limits.minEdge}`);
   }
   if (!checks.var_within_limit) {
-    console.error(`[RiskGate] REJECTED [${platform}]: VaR95 ${var95.toFixed(4)} < -0.10 (pModel=${pModel.toFixed(4)})`);
+    console.error(`[RiskGate] REJECTED [${platform}]: VaR95 ${var95.toFixed(4)} < -0.35 (pModel=${pModel.toFixed(4)})`);
   }
 
   const approved = Object.values(checks).every(Boolean);
