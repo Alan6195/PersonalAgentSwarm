@@ -40,19 +40,24 @@ async function migrate() {
     `);
 
     // Register the Market Discovery cron job (30-min cycle for order flow market rotation)
+    // agent_id is NULL (same pattern as other predict cron jobs)
     console.log("[Migrate v14] Registering Market Discovery cron job...");
-    await client.query(`
-      INSERT INTO cron_jobs (name, description, schedule, agent_id, enabled, job_type)
-      VALUES (
-        'Predict Market Discovery',
-        'Discover active 5/15-min Up/Down crypto markets for order flow scanner',
-        '*/30 * * * *',
-        'system',
-        true,
-        'system'
-      )
-      ON CONFLICT (name) DO NOTHING
-    `);
+    const exists = await client.query(
+      `SELECT id FROM cron_jobs WHERE name = 'Predict Market Discovery'`
+    );
+    if (exists.rows.length === 0) {
+      await client.query(`
+        INSERT INTO cron_jobs (name, description, schedule, enabled)
+        VALUES (
+          'Predict Market Discovery',
+          'Discover active 5/15-min Up/Down crypto markets for order flow scanner',
+          '*/30 * * * *',
+          true
+        )
+      `);
+    } else {
+      console.log("[Migrate v14] Predict Market Discovery cron already exists, skipping.");
+    }
 
     await client.query("COMMIT");
     console.log("[Migrate v14] Done. order_flow_signals table + Market Discovery cron created.");
