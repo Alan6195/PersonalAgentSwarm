@@ -98,10 +98,13 @@ export async function validateTrade(candidate: TradeCandidate, bankroll: number)
 
   if (platform === 'polymarket') {
     // Momentum confidence: only trade when price feed shows strong enough signal.
-    // momentumStrength 0.0-1.0 from price feed; require >= 0.4 to trade.
+    // momentumStrength 0.0-1.0 from price feed; require >= 0.35 to trade.
+    // Lowered from 0.40: the boundary caused near-misses (0.399 displayed as 0.40
+    // but rejected), and with intel signals providing additional context, a slightly
+    // lower threshold still filters out noise while catching real moves.
     const ms = candidate.momentumStrength ?? 0;
-    signalQualityOk = ms >= 0.4;
-    signalQualityLabel = `momentum_confidence: ${ms.toFixed(2)} (min 0.40)`;
+    signalQualityOk = ms >= 0.35;
+    signalQualityLabel = `momentum_confidence: ${ms.toFixed(2)} (min 0.35)`;
   } else {
     // VaR95: at 95% confidence, worst-case probability must be within 10pp of model
     const var95 = pModel - 1.645 * Math.sqrt(pModel * (1 - pModel));

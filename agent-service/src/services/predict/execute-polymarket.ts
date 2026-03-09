@@ -65,7 +65,7 @@ function getClobClient(): ClobClient {
       secret: config.POLYMARKET_API_SECRET,
       passphrase: config.POLYMARKET_API_PASSPHRASE,
     },
-    0, // signatureType: 0 = EOA (browser wallet / Phantom)
+    1, // signatureType: 1 = POLY_PROXY (Phantom EOA signs, proxy wallet holds funds)
   );
 
   console.log('[PolyExec] CLOB client initialized with L2 auth');
