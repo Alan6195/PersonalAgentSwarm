@@ -18,6 +18,64 @@ import { config, isPolyDryRun } from '../../config';
 
 let modelsValidated = false;
 
+// ── Momentum Watcher (Loop 1) ─────────────────────────────────────────────
+// Runs every 60 seconds via setInterval. Pure in-memory check of price feed
+// signals (zero API cost, zero DB writes). When any asset crosses the
+// momentum threshold, triggers a full Polymarket scan immediately.
+// 5-minute cooldown prevents repeated scans on the same momentum event.
+
+let momentumWatcherInterval: NodeJS.Timeout | null = null;
+let lastFullScanAt = 0;
+const SCAN_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Start the momentum watcher loop. Calls onTrigger with scan result
+ * when momentum is detected and a scan is triggered.
+ */
+export function startMomentumWatcher(
+  onTrigger: (result: string, asset: string, direction: string) => void
+): void {
+  console.log('[MomentumWatch] Started — checking every 60s');
+
+  momentumWatcherInterval = setInterval(async () => {
+    // Cooldown check: don't re-trigger within 5 minutes of last scan
+    if (Date.now() - lastFullScanAt < SCAN_COOLDOWN_MS) return;
+
+    const signals = ['BTC', 'ETH', 'SOL', 'XRP'].map(a => priceFeed.getSignal(a));
+    const triggerSignal = signals.find(s =>
+      s && s.momentum !== 'neutral' && s.momentumStrength > 0.3
+    );
+
+    if (!triggerSignal) return;
+
+    console.log(
+      `[MomentumWatch] Detected: ${triggerSignal.asset} ${triggerSignal.momentum} ` +
+      `(strength: ${triggerSignal.momentumStrength.toFixed(2)}, ` +
+      `5m return: ${(triggerSignal.return5m * 100).toFixed(2)}%)`
+    );
+
+    // Trigger full scan (Loop 2)
+    try {
+      lastFullScanAt = Date.now();
+      const result = await handlePolymarketScan(0);
+      onTrigger(result, triggerSignal.asset, triggerSignal.momentum);
+    } catch (err: any) {
+      console.error('[MomentumWatch] Scan failed:', err.message);
+    }
+  }, 60_000);
+}
+
+/**
+ * Stop the momentum watcher loop. Called on graceful shutdown.
+ */
+export function stopMomentumWatcher(): void {
+  if (momentumWatcherInterval) {
+    clearInterval(momentumWatcherInterval);
+    momentumWatcherInterval = null;
+    console.log('[MomentumWatch] Stopped');
+  }
+}
+
 /**
  * Manifold scan: fetch markets, analyze with Claude, execute trades
  * Schedule: every 4 hours during waking hours MT
@@ -167,6 +225,7 @@ export async function handlePolymarketScan(taskId: number): Promise<string> {
   // Momentum gate: only scan when at least one asset shows meaningful momentum.
   // Flat markets (all neutral) have no edge — scanning them wastes API calls
   // and produces trades with thin margins that lose to taker fees.
+  // This gate serves both paths: cron (*/15 fallback) and momentum watcher trigger.
   const signals = ['BTC', 'ETH', 'SOL', 'XRP'].map(a => priceFeed.getSignal(a));
   const hasAnyMomentum = signals.some(s =>
     s && s.momentum !== 'neutral' && s.momentumStrength > 0.3
@@ -176,6 +235,9 @@ export async function handlePolymarketScan(taskId: number): Promise<string> {
     console.log('[PolyScan] Skipped — all assets neutral, no momentum signal');
     return 'Scan skipped — no momentum signal. All assets neutral.';
   }
+
+  // Update cooldown timestamp (prevents momentum watcher from re-triggering)
+  lastFullScanAt = Date.now();
 
   // Fetch and filter markets
   const candidates = await scanPolymarket();

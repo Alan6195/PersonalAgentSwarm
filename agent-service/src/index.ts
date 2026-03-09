@@ -6,6 +6,7 @@ import { startScheduler, stopScheduler, setCronNotifier } from './services/cron-
 import { setProgressNotifier } from './agents/router';
 import { setBudgetAlertNotifier } from './services/cost-tracker';
 import { priceFeed } from './services/predict/price-feed';
+import { startMomentumWatcher, stopMomentumWatcher } from './services/predict/cron';
 
 async function main(): Promise<void> {
   console.log('[Agent Service] Starting...');
@@ -75,13 +76,25 @@ async function main(): Promise<void> {
   // 8. Start price feed for Polymarket scanner
   priceFeed.start();
 
-  // 9. Start cron scheduler
+  // 8b. Start momentum watcher (Loop 1): checks price feed every 60s,
+  // triggers immediate Polymarket scan when momentum detected.
+  // 5-min cooldown prevents repeated scans on same momentum event.
+  startMomentumWatcher((result, asset, direction) => {
+    telegramNotifier(
+      `*Momentum scan triggered*\n` +
+      `${asset} ${direction}\n` +
+      `${result}`
+    );
+  });
+
+  // 9. Start cron scheduler (includes */15 Polymarket scan as heartbeat fallback)
   await startScheduler();
 
   // 10. Graceful shutdown
   const shutdown = async (): Promise<void> => {
     console.log('[Agent Service] Shutting down...');
     stopScheduler();
+    stopMomentumWatcher();
     priceFeed.stop();
     bot.stopPolling();
     webhookServer.close();
