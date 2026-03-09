@@ -728,54 +728,55 @@ export async function reconcilePolymarketPositions(): Promise<{
 
   for (const pos of positions) {
     try {
-      // Query Gamma Markets API for market resolution
-      // conditionId is stored as market_id
+      // Query CLOB API for market status (Gamma API doesn't reliably match by conditionId)
       const res = await fetch(
-        `https://gamma-api.polymarket.com/markets?condition_id=${pos.market_id}`
+        `https://clob.polymarket.com/markets/${pos.market_id}`
       );
 
       if (!res.ok) {
-        console.warn(`[PolyResolve] Gamma API error for ${pos.market_id}: ${res.status}`);
-        continue;
-      }
-
-      const markets = await res.json() as any[];
-      if (!markets || markets.length === 0) {
-        // Check if market has expired based on question text (fallback)
-        // Up/Down markets have timestamps in their questions
-        const expired = isMarketExpired(pos.question);
-        if (expired) {
-          // Market expired but no resolution data yet — mark as expired pending
-          // Check again later; Gamma API may take a few minutes after expiry
-          console.log(`[PolyResolve] Market expired but no resolution data: ${pos.question.substring(0, 50)}`);
+        console.warn(`[PolyResolve] CLOB API error for ${pos.market_id.substring(0, 20)}: ${res.status}`);
+        // Fallback: force-close if expired > 60 minutes
+        if (isMarketExpired(pos.question) && getMinutesSinceExpiry(pos.question) > 60) {
+          console.warn(`[PolyResolve] Force-closing stale position (API error, 60+ min post-expiry)`);
+          await closePosition(pos.id, 'closed_loss', -parseFloat(pos.bet_size), 'Force-closed: API error + expired');
+          result.closed++;
+          result.losses++;
+          result.totalPnl -= parseFloat(pos.bet_size);
         }
         continue;
       }
 
-      const market = markets[0];
+      const market = await res.json() as any;
+      const tokens = market.tokens || [];
 
-      // Check if market is resolved
-      if (!market.resolved) {
-        // Check if expired — some markets take a few minutes to resolve after expiry
-        if (isMarketExpired(pos.question)) {
+      // Check if any token has winner=true (market resolved)
+      const winningToken = tokens.find((t: any) => t.winner === true);
+
+      if (!winningToken) {
+        // Not yet resolved. Check if market is closed or expired
+        if (market.closed || (!market.accepting_orders && isMarketExpired(pos.question))) {
           const minutesSinceExpiry = getMinutesSinceExpiry(pos.question);
-          if (minutesSinceExpiry > 30) {
-            // Auto-close as loss if unresolved 30+ minutes after expiry
+          if (minutesSinceExpiry > 60) {
+            // Force-close if unresolved 60+ minutes after expiry
             console.warn(`[PolyResolve] Force-closing unresolved position (${minutesSinceExpiry.toFixed(0)}min post-expiry): ${pos.question.substring(0, 50)}`);
-            await closePosition(pos.id, 'closed_loss', -parseFloat(pos.bet_size), 'Auto-closed: market expired but never resolved');
+            await closePosition(pos.id, 'closed_loss', -parseFloat(pos.bet_size), 'Force-closed: unresolved 60+ min past expiry');
             result.closed++;
             result.losses++;
             result.totalPnl -= parseFloat(pos.bet_size);
+          } else {
+            console.log(`[PolyResolve] Awaiting resolution (${minutesSinceExpiry.toFixed(0)}min post-expiry): ${pos.question.substring(0, 50)}`);
           }
         }
         continue;
       }
 
-      // Market resolved — determine outcome
-      // resolved_to: "YES" or "NO" (or a probability for some markets)
-      const resolvedTo = market.outcome || market.resolved_to || '';
-      const won = (pos.direction === 'YES' && resolvedTo === 'Yes') ||
-                  (pos.direction === 'NO' && resolvedTo === 'No');
+      // Market resolved — determine if we won
+      // winner token outcome is "Up" or "Down" for crypto markets
+      const winnerOutcome = winningToken.outcome; // "Up" or "Down"
+      // Map our YES/NO direction to Up/Down:
+      // Buying YES = betting on "Up", buying NO = betting on "Down"
+      const won = (pos.direction === 'YES' && winnerOutcome === 'Up') ||
+                  (pos.direction === 'NO' && winnerOutcome === 'Down');
 
       // P&L calculation:
       // Won: receive $1 per share, paid fill_price per share. Profit = shares * (1 - fill_price) - fees
@@ -788,14 +789,14 @@ export async function reconcilePolymarketPositions(): Promise<{
         : -betSize;
 
       const status = won ? 'closed_win' : 'closed_loss';
-      await closePosition(pos.id, status, pnl, `Resolved: ${resolvedTo}`);
+      await closePosition(pos.id, status, pnl, `Resolved: ${winnerOutcome} won`);
 
       result.closed++;
       if (won) result.wins++;
       else result.losses++;
       result.totalPnl += pnl;
 
-      console.log(`[PolyResolve] ${won ? 'WIN' : 'LOSS'}: ${pos.direction} on "${pos.question.substring(0, 50)}" -> ${resolvedTo}. P&L: $${pnl.toFixed(2)}`);
+      console.log(`[PolyResolve] ${won ? 'WIN' : 'LOSS'}: ${pos.direction} on "${pos.question.substring(0, 50)}" -> ${winnerOutcome}. P&L: $${pnl.toFixed(2)}`);
     } catch (err) {
       console.warn(`[PolyResolve] Error checking position #${pos.id}:`, (err as Error).message);
     }

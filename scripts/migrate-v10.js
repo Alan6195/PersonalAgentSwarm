@@ -252,7 +252,7 @@ async function migrate() {
       {
         name: "Predict Resolution Check",
         description: "Checks open positions for market resolution. Calculates P&L, logs hypothesis evidence.",
-        schedule: "*/30 * * * *",
+        schedule: "*/5 * * * *",
         agent_id: null,
       },
       {
