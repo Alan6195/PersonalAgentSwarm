@@ -138,6 +138,8 @@ export interface PolyCandidate {
   negRisk: boolean;
   tickSize: string;
   minOrderSize: number;
+  // Optional: override computed limit price (used by order flow scanner)
+  limitPriceOverride?: number;
 }
 
 /**

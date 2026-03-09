@@ -190,9 +190,18 @@ async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
   }
 
   if (isDryRun) {
+    // Fetch fresh mid even in dry-run mode so we can validate limit prices
+    const { fetchCurrentMidPrice: fetchMid } = await import('./execute-polymarket');
+    const freshMid = await fetchMid(signal.yesTokenId);
+    const currentMid = freshMid ?? signal.midPrice;
+    const wouldLimit = signal.entryDirection === 'YES'
+      ? Math.min(currentMid + 0.02, 0.65)
+      : Math.min((1 - currentMid) + 0.02, 0.65);
+
     console.log(
       `[OrderFlow] DRY RUN: Would ${signal.entryDirection} on "${signal.question.substring(0, 60)}" ` +
-      `$${betSize.toFixed(2)} | OFI=${(signal.ofi60s * 100).toFixed(1)}% | str=${(signal.signalStrength * 100).toFixed(0)}%`
+      `$${betSize.toFixed(2)} | OFI=${(signal.ofi60s * 100).toFixed(1)}% | str=${(signal.signalStrength * 100).toFixed(0)}% ` +
+      `| mid=${currentMid.toFixed(4)} limit=${wouldLimit.toFixed(4)}`
     );
 
     // Log dry-run signal to Telegram
@@ -202,7 +211,9 @@ async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
           `[DRY RUN] ORDER FLOW SIGNAL\n` +
           `${signal.asset} ${signal.entryDirection}\n` +
           `OFI: ${(signal.ofi60s * 100).toFixed(1)}% | Strength: ${(signal.signalStrength * 100).toFixed(0)}%\n` +
-          `Size: $${betSize.toFixed(2)} | Large trade: ${signal.largeTradeDetected ? 'yes' : 'no'}`
+          `Mid: ${currentMid.toFixed(3)} | Limit: ${wouldLimit.toFixed(3)}\n` +
+          `Size: $${betSize.toFixed(2)} | Large trade: ${signal.largeTradeDetected ? 'yes' : 'no'}\n` +
+          `Volume: ${signal.totalVolume60s.toFixed(0)} shares/60s`
         );
       } catch { /* non-critical */ }
     }
@@ -211,7 +222,25 @@ async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
 
   // Live execution via CLOB client
   try {
-    const { executePolymarketTrade } = await import('./execute-polymarket');
+    const { executePolymarketTrade, fetchCurrentMidPrice } = await import('./execute-polymarket');
+
+    // Fetch fresh mid price from CLOB API (signal.midPrice may be 30+ min stale from discovery)
+    const yesTokenId = signal.yesTokenId;
+    const freshMid = await fetchCurrentMidPrice(yesTokenId);
+    const currentMid = freshMid ?? signal.midPrice; // fallback to stale if API fails
+
+    if (freshMid !== null) {
+      console.log(`[OrderFlow] Fresh midPrice: ${freshMid.toFixed(4)} (was ${signal.midPrice.toFixed(4)} from discovery)`);
+    } else {
+      console.warn(`[OrderFlow] Could not fetch fresh midPrice, using stale: ${signal.midPrice.toFixed(4)}`);
+    }
+
+    // Compute capped limit price relative to current mid
+    // YES: buy at currentMid + 0.02 (cap 0.65 to avoid overpaying in 50/50 markets)
+    // NO: buy NO token at (1 - currentMid) + 0.02, which means limit for YES view = currentMid - 0.02 (floor 0.35)
+    const limitPriceOverride = signal.entryDirection === 'YES'
+      ? Math.min(currentMid + 0.02, 0.65)
+      : Math.min((1 - currentMid) + 0.02, 0.65);
 
     // Build a PolyCandidate-like object for the existing execution pipeline
     const candidate = {
@@ -221,8 +250,8 @@ async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
       category: 'crypto',
       asset: signal.asset,
       url: '',
-      pYes: signal.midPrice,
-      pLmsr: signal.midPrice,
+      pYes: currentMid,
+      pLmsr: currentMid,
       pBayes: pModel,
       edge: signal.signalStrength * 0.15,
       direction: signal.entryDirection as 'YES' | 'NO',
@@ -253,7 +282,10 @@ async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
       negRisk: false,
       tickSize: '0.01',
       minOrderSize: 5,
+      limitPriceOverride,
     };
+
+    console.log(`[OrderFlow] Limit price: ${limitPriceOverride.toFixed(4)} (${signal.entryDirection}, mid=${currentMid.toFixed(4)})`);
 
     const result = await executePolymarketTrade(candidate, bankroll);
 

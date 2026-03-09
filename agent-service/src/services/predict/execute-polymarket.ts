@@ -524,13 +524,20 @@ async function placePolymarketOrder(
     // Limit price: mid-price + 2 ticks to cross the spread and get filled immediately.
     // These are 5-15 min markets; sitting at mid-price risks timeout. The 2-tick premium
     // is still well within our edge (minimum 9c net edge to reach execution).
+    // Order flow scanner can override with a fresh, capped limit price via limitPriceOverride.
     const midPrice = market.direction === 'YES' ? market.pYes : (1 - market.pYes);
-    const limitPrice = Math.min(midPrice + 2 * tickSize, 0.99); // cap at 99c
+    let limitPrice: number;
+    if (market.limitPriceOverride != null) {
+      limitPrice = market.limitPriceOverride;
+    } else {
+      limitPrice = Math.min(midPrice + 2 * tickSize, 0.99); // cap at 99c
+    }
     // Size is number of outcome shares = USDC amount / price per share
     const size = amount / limitPrice;
 
+    const limitSource = market.limitPriceOverride != null ? 'override' : '+2 ticks';
     console.log(`[PolyExec] Placing order: BUY ${market.direction} on "${market.question.substring(0, 60)}"`);
-    console.log(`[PolyExec]   amount=$${amount.toFixed(2)}, mid=${midPrice.toFixed(4)}, limit=${limitPrice.toFixed(4)} (+2 ticks), size=${size.toFixed(2)} shares`);
+    console.log(`[PolyExec]   amount=$${amount.toFixed(2)}, mid=${midPrice.toFixed(4)}, limit=${limitPrice.toFixed(4)} (${limitSource}), size=${size.toFixed(2)} shares`);
     console.log(`[PolyExec]   tokenId=${tokenId.slice(0, 30)}..., negRisk=${market.negRisk}, tickSize=${market.tickSize}`);
 
     // Round price to tick size
@@ -912,6 +919,28 @@ function getETOffsetHours(): number {
     }).format(now)
   );
   return ((now.getUTCHours() - etHour) + 24) % 24;
+}
+
+/**
+ * Fetch fresh midpoint price for a token from Polymarket CLOB API.
+ * Returns the current midpoint (0-1) or null if unavailable.
+ * Used by order flow scanner to get real-time prices instead of stale discovery-time values.
+ */
+export async function fetchCurrentMidPrice(tokenId: string): Promise<number | null> {
+  try {
+    const res = await fetch(`https://clob.polymarket.com/midpoint?token_id=${tokenId}`);
+    if (!res.ok) {
+      console.warn(`[PolyExec] Midpoint API error: ${res.status}`);
+      return null;
+    }
+    const json = await res.json() as any;
+    const mid = parseFloat(json?.mid);
+    if (isNaN(mid) || mid <= 0 || mid >= 1) return null;
+    return mid;
+  } catch (err: any) {
+    console.warn(`[PolyExec] Failed to fetch midpoint: ${err.message}`);
+    return null;
+  }
 }
 
 function sleep(ms: number): Promise<void> {
