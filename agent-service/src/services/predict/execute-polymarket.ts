@@ -574,6 +574,17 @@ async function placePolymarketOrder(
     }
 
     // Record position in DB
+    const dbParams = [
+      'polymarket', market.id, market.url, market.question, market.category,
+      market.asset, market.direction,
+      market.pYes, market.pBayes, market.edge, market.kellyFrac,
+      amount, fill.fillPrice,
+      market.score, market.expectedRet,
+      market.intelSignalId, market.intelAligned,
+      market.reasoning,
+      orderId,
+    ];
+    console.log(`[PolyExec] DB insert params: pYes=${market.pYes}, pBayes=${market.pBayes}, edge=${market.edge}, kelly=${market.kellyFrac}, amount=${amount}, fillPrice=${fill.fillPrice}, score=${market.score}, expectedRet=${market.expectedRet}, intelSigId=${market.intelSignalId}, intelAligned=${market.intelAligned}`);
     const rows = await query<{ id: number }>(
       `INSERT INTO market_positions
        (platform, market_id, market_url, question, category, asset, direction,
@@ -582,16 +593,7 @@ async function placePolymarketOrder(
         reasoning, bet_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
        RETURNING id`,
-      [
-        'polymarket', market.id, market.url, market.question, market.category,
-        market.asset, market.direction,
-        market.pYes, market.pBayes, market.edge, market.kellyFrac,
-        amount, fill.fillPrice,
-        market.score, market.expectedRet,
-        market.intelSignalId, market.intelAligned,
-        market.reasoning,
-        orderId,
-      ]
+      dbParams
     );
 
     const positionId = rows[0]?.id;
