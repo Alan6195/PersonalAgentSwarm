@@ -225,7 +225,7 @@ async function checkUSDCBalance(): Promise<HealthCheck> {
   try {
     const wallet = config.POLYMARKET_WALLET_ADDRESS;
     const usdc = config.USDC_CONTRACT;
-    const data = `0x70a08231000000000000000000000000${wallet.replace('0x', '').padStart(64, '0')}`;
+    const data = `0x70a08231${wallet.replace('0x', '').toLowerCase().padStart(64, '0')}`;
 
     const res = await fetch(config.POLYGON_RPC_URL, {
       method: 'POST',

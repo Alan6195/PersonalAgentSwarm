@@ -671,7 +671,7 @@ export async function getUSDCBalance(): Promise<number | null> {
   if (!config.POLYGON_RPC_URL || !config.POLYMARKET_WALLET_ADDRESS) return null;
 
   try {
-    const data = `0x70a08231000000000000000000000000${config.POLYMARKET_WALLET_ADDRESS.replace('0x', '').padStart(64, '0')}`;
+    const data = `0x70a08231${config.POLYMARKET_WALLET_ADDRESS.replace('0x', '').toLowerCase().padStart(64, '0')}`;
     const res = await fetch(config.POLYGON_RPC_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
