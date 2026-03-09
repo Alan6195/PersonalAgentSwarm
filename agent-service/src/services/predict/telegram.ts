@@ -8,7 +8,7 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { query, queryOne } from '../../db';
 import { getCurrentBankroll, getTradeStats, getManifoldBalance } from './execute';
-import { getUSDCBalance, checkApprovals, ensureWalletReady } from './execute-polymarket';
+import { getUSDCBalance, checkApprovals, ensureWalletReady, swapUSDCToUSDCe } from './execute-polymarket';
 import { RISK_LIMITS } from './risk-gate';
 import { priceFeed } from './price-feed';
 import { runHealthChecks } from './health-monitor';

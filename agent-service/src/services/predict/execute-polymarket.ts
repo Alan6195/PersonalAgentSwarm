@@ -28,11 +28,23 @@ const EXCHANGE_CONTRACTS = {
   negRiskAdapter: '0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296' as `0x${string}`,
 };
 
+// Token addresses on Polygon
+const NATIVE_USDC = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359' as `0x${string}`;
+const BRIDGED_USDCE = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174' as `0x${string}`;
+
+// Uniswap V3 SwapRouter02 on Polygon
+const SWAP_ROUTER = '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45' as `0x${string}`;
+
 // ERC20 ABI for approval checks and transactions
 const ERC20_ABI = parseAbi([
   'function allowance(address owner, address spender) view returns (uint256)',
   'function approve(address spender, uint256 amount) returns (bool)',
   'function balanceOf(address account) view returns (uint256)',
+]);
+
+// Uniswap V3 SwapRouter02 ABI (just the function we need)
+const SWAP_ROUTER_ABI = parseAbi([
+  'function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) external payable returns (uint256 amountOut)',
 ]);
 
 export interface PolyTradeResult {
@@ -183,23 +195,165 @@ export async function approveUSDC(): Promise<{
 }
 
 /**
- * Full wallet setup: check and approve USDC for trading.
+ * Swap native USDC to USDC.e (bridged) via Uniswap V3 on Polygon.
+ * USDC/USDC.e pools are essentially 1:1 with minimal slippage.
+ * Uses 0.01% fee tier (lowest, best for stablecoin pairs).
+ */
+export async function swapUSDCToUSDCe(amountUsd?: number): Promise<{
+  success: boolean;
+  amountIn: number;
+  amountOut: number;
+  txHash?: string;
+  error?: string;
+}> {
+  if (!config.POLYMARKET_WALLET_KEY || !config.POLYGON_RPC_URL) {
+    return { success: false, amountIn: 0, amountOut: 0, error: 'Wallet or RPC not configured' };
+  }
+
+  const account = privateKeyToAccount(config.POLYMARKET_WALLET_KEY as `0x${string}`);
+  const walletClient = createWalletClient({
+    account,
+    chain: polygon,
+    transport: http(config.POLYGON_RPC_URL),
+  });
+  const publicClient = createPublicClient({
+    chain: polygon,
+    transport: http(config.POLYGON_RPC_URL),
+  });
+
+  // Get native USDC balance
+  const nativeBalance = await publicClient.readContract({
+    address: NATIVE_USDC,
+    abi: ERC20_ABI,
+    functionName: 'balanceOf',
+    args: [account.address],
+  });
+  const nativeBalanceUsd = Number(nativeBalance) / 1e6;
+
+  if (nativeBalanceUsd < 0.50) {
+    return { success: false, amountIn: 0, amountOut: 0, error: `Native USDC balance too low: $${nativeBalanceUsd.toFixed(2)}` };
+  }
+
+  // Amount to swap (default: all native USDC)
+  const swapAmountUsd = amountUsd ?? nativeBalanceUsd;
+  const swapAmountRaw = BigInt(Math.floor(swapAmountUsd * 1e6));
+
+  console.log(`[PolySetup] Swapping $${swapAmountUsd.toFixed(2)} native USDC -> USDC.e via Uniswap V3`);
+
+  // Step 1: Approve native USDC for SwapRouter
+  const currentAllowance = await publicClient.readContract({
+    address: NATIVE_USDC,
+    abi: ERC20_ABI,
+    functionName: 'allowance',
+    args: [account.address, SWAP_ROUTER],
+  });
+
+  if (currentAllowance < swapAmountRaw) {
+    console.log('[PolySetup] Approving native USDC for Uniswap SwapRouter...');
+    const approveTx = await walletClient.writeContract({
+      address: NATIVE_USDC,
+      abi: ERC20_ABI,
+      functionName: 'approve',
+      args: [SWAP_ROUTER, maxUint256],
+    });
+    console.log(`[PolySetup] Approve tx: ${approveTx}`);
+    // Wait for confirmation
+    await publicClient.waitForTransactionReceipt({ hash: approveTx });
+    console.log('[PolySetup] Approve confirmed');
+  }
+
+  // Step 2: Execute swap via exactInputSingle
+  // Use 0.01% fee tier (100) for stablecoin pairs, fallback to 0.05% (500)
+  // Min output: 99.5% of input (0.5% slippage tolerance for stablecoin swap)
+  const minAmountOut = swapAmountRaw * 995n / 1000n;
+
+  try {
+    const swapTx = await walletClient.writeContract({
+      address: SWAP_ROUTER,
+      abi: SWAP_ROUTER_ABI,
+      functionName: 'exactInputSingle',
+      args: [{
+        tokenIn: NATIVE_USDC,
+        tokenOut: BRIDGED_USDCE,
+        fee: 100, // 0.01% fee tier
+        recipient: account.address,
+        amountIn: swapAmountRaw,
+        amountOutMinimum: minAmountOut,
+        sqrtPriceLimitX96: 0n,
+      }],
+    });
+
+    console.log(`[PolySetup] Swap tx: ${swapTx}`);
+    const receipt = await publicClient.waitForTransactionReceipt({ hash: swapTx });
+
+    // Check USDC.e balance after swap
+    const newBalance = await publicClient.readContract({
+      address: BRIDGED_USDCE,
+      abi: ERC20_ABI,
+      functionName: 'balanceOf',
+      args: [account.address],
+    });
+    const newBalanceUsd = Number(newBalance) / 1e6;
+
+    console.log(`[PolySetup] Swap complete! USDC.e balance: $${newBalanceUsd.toFixed(2)}`);
+    return {
+      success: receipt.status === 'success',
+      amountIn: swapAmountUsd,
+      amountOut: newBalanceUsd,
+      txHash: swapTx,
+    };
+  } catch (err: any) {
+    // Try 0.05% fee tier as fallback
+    console.log('[PolySetup] 0.01% pool failed, trying 0.05% fee tier...');
+    try {
+      const swapTx = await walletClient.writeContract({
+        address: SWAP_ROUTER,
+        abi: SWAP_ROUTER_ABI,
+        functionName: 'exactInputSingle',
+        args: [{
+          tokenIn: NATIVE_USDC,
+          tokenOut: BRIDGED_USDCE,
+          fee: 500, // 0.05% fee tier
+          recipient: account.address,
+          amountIn: swapAmountRaw,
+          amountOutMinimum: minAmountOut,
+          sqrtPriceLimitX96: 0n,
+        }],
+      });
+
+      console.log(`[PolySetup] Swap tx (0.05% pool): ${swapTx}`);
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: swapTx });
+
+      const newBalance = await publicClient.readContract({
+        address: BRIDGED_USDCE,
+        abi: ERC20_ABI,
+        functionName: 'balanceOf',
+        args: [account.address],
+      });
+      const newBalanceUsd = Number(newBalance) / 1e6;
+
+      console.log(`[PolySetup] Swap complete! USDC.e balance: $${newBalanceUsd.toFixed(2)}`);
+      return {
+        success: receipt.status === 'success',
+        amountIn: swapAmountUsd,
+        amountOut: newBalanceUsd,
+        txHash: swapTx,
+      };
+    } catch (err2: any) {
+      return { success: false, amountIn: swapAmountUsd, amountOut: 0, error: err2.message?.substring(0, 200) };
+    }
+  }
+}
+
+/**
+ * Full wallet setup: swap USDC if needed, check and approve for trading.
  * Call this before first trade or from /predict setup command.
  */
 export async function ensureWalletReady(): Promise<{
   ready: boolean;
   message: string;
 }> {
-  // Check USDC.e balance
-  const balance = await getUSDCBalance();
-  if (balance === null || balance < 0.50) {
-    return {
-      ready: false,
-      message: `USDC.e balance too low: $${balance?.toFixed(2) ?? '0'}. Need USDC.e (bridged) in EOA wallet.`,
-    };
-  }
-
-  // Check gas balance
+  // Check gas balance first
   if (config.POLYGON_RPC_URL && config.POLYMARKET_WALLET_ADDRESS) {
     try {
       const res = await fetch(config.POLYGON_RPC_URL, {
@@ -215,10 +369,62 @@ export async function ensureWalletReady(): Promise<{
       if (maticBalance < 0.005) {
         return {
           ready: false,
-          message: `MATIC balance too low: ${maticBalance.toFixed(6)}. Need >= 0.01 MATIC for approval transactions.`,
+          message: `MATIC balance too low: ${maticBalance.toFixed(6)}. Need >= 0.01 MATIC for swap + approval transactions.`,
         };
       }
     } catch { /* non-critical */ }
+  }
+
+  // Check USDC.e balance
+  let balance = await getUSDCBalance();
+
+  // If USDC.e is too low, try to swap native USDC -> USDC.e
+  if (balance === null || balance < 0.50) {
+    console.log(`[PolySetup] USDC.e balance low ($${balance?.toFixed(2) ?? '0'}), checking native USDC for swap...`);
+
+    // Check native USDC balance
+    if (config.POLYGON_RPC_URL && config.POLYMARKET_WALLET_ADDRESS) {
+      const publicClient = createPublicClient({
+        chain: polygon,
+        transport: http(config.POLYGON_RPC_URL),
+      });
+      try {
+        const nativeBalance = await publicClient.readContract({
+          address: NATIVE_USDC,
+          abi: ERC20_ABI,
+          functionName: 'balanceOf',
+          args: [config.POLYMARKET_WALLET_ADDRESS as `0x${string}`],
+        });
+        const nativeBalanceUsd = Number(nativeBalance) / 1e6;
+
+        if (nativeBalanceUsd >= 0.50) {
+          console.log(`[PolySetup] Found $${nativeBalanceUsd.toFixed(2)} native USDC. Swapping to USDC.e...`);
+          const swapResult = await swapUSDCToUSDCe();
+
+          if (!swapResult.success) {
+            return { ready: false, message: `USDC swap failed: ${swapResult.error}` };
+          }
+
+          // Re-check USDC.e balance after swap
+          balance = await getUSDCBalance();
+          console.log(`[PolySetup] Post-swap USDC.e balance: $${balance?.toFixed(2) ?? '0'}`);
+        } else {
+          return {
+            ready: false,
+            message: `No USDC available. USDC.e: $${balance?.toFixed(2) ?? '0'}, native USDC: $${nativeBalanceUsd.toFixed(2)}`,
+          };
+        }
+      } catch (err: any) {
+        return { ready: false, message: `Balance check failed: ${err.message?.substring(0, 100)}` };
+      }
+    }
+  }
+
+  if (balance === null || balance < 0.50) {
+    return {
+      ready: false,
+      message: `USDC.e balance still too low after swap: $${balance?.toFixed(2) ?? '0'}`,
+    };
   }
 
   // Check approvals
