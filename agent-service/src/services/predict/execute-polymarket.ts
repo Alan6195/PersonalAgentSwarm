@@ -1067,9 +1067,26 @@ export async function redeemAllWinnings(): Promise<{
       });
 
       if (balance === 0n) {
-        console.log(`[PolyRedeem] ${conditionId.substring(0, 16)}: no tokens held (balance=0), marking redeemed`);
-        for (const pos of condPositions) {
-          await markPositionRedeemed(pos.id);
+        // Check how old the position is. Fresh trades may not have settled on-chain yet
+        // (CLOB matches off-chain, settlement is batched). Don't mark as redeemed
+        // unless the position is old enough that settlement should have completed.
+        const oldestPos = condPositions[0];
+        const posAge = await query<any>(
+          `SELECT EXTRACT(EPOCH FROM (NOW() - closed_at)) as age_seconds FROM market_positions WHERE id = $1`,
+          [oldestPos.id]
+        );
+        const ageSeconds = parseFloat(posAge[0]?.age_seconds || '0');
+
+        if (ageSeconds > 3600) {
+          // Position closed > 1 hour ago: settlement should have completed. Mark as redeemed
+          // (tokens were likely already redeemed externally or settlement never happened).
+          console.log(`[PolyRedeem] ${conditionId.substring(0, 16)}: no tokens (age=${Math.round(ageSeconds / 60)}min), marking redeemed`);
+          for (const pos of condPositions) {
+            await markPositionRedeemed(pos.id, undefined);
+          }
+        } else {
+          // Position is recent: settlement may be pending. Skip and retry next cycle.
+          console.log(`[PolyRedeem] ${conditionId.substring(0, 16)}: no tokens yet (age=${Math.round(ageSeconds / 60)}min), will retry`);
         }
         continue;
       }
