@@ -271,16 +271,16 @@ async function handleGoLive(chatId: number, bot: TelegramBot): Promise<void> {
     detail: recentScanCount > 0 ? `${recentScanCount} in last 2h` : 'no scans in last 2h',
   });
 
-  // 5. Dry-run candidates with net edge > 9c
+  // 5. Dry-run candidates with net edge > 6c
   const edgeCandidates = await queryOne<{ count: string }>(
     `SELECT COUNT(*) as count FROM market_scans
      WHERE platform = 'polymarket'
-       AND COALESCE(net_edge, abs_edge) > 0.09
+       AND COALESCE(net_edge, abs_edge) > 0.06
        AND scanned_at > NOW() - INTERVAL '24 hours'`
   );
   const edgeCount = parseInt(edgeCandidates?.count || '0');
   checks.push({
-    label: 'Candidates with net edge > 9c (24h)',
+    label: 'Candidates with net edge > 6c (24h)',
     pass: edgeCount > 0,
     detail: edgeCount > 0 ? `${edgeCount} found` : 'none yet',
   });
@@ -382,7 +382,7 @@ export function checkEdgeCandidateNotification(
   question: string,
 ): { shouldNotify: boolean; message: string } {
   if (!notifyOnFirstEdgeCandidate) return { shouldNotify: false, message: '' };
-  if (topEdge < 0.09) return { shouldNotify: false, message: '' };
+  if (topEdge < 0.06) return { shouldNotify: false, message: '' };
 
   notifyOnFirstEdgeCandidate = false;
   return {
@@ -391,7 +391,7 @@ export function checkEdgeCandidateNotification(
       'EDGE CANDIDATE FOUND',
       '',
       `"${question.substring(0, 80)}"`,
-      `Net edge: ${(topEdge * 100).toFixed(1)}c (threshold: 9c, after fees)`,
+      `Net edge: ${(topEdge * 100).toFixed(1)}c (threshold: 6c, after fees)`,
       '',
       'This market would qualify for a live trade.',
       'Send /predict golive to review pre-flight checks.',

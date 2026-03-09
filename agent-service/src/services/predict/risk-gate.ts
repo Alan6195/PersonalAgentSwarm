@@ -46,7 +46,7 @@ export const POLY_RISK_LIMITS: RiskLimits = {
   maxTotalExposurePct: 0.40,  // 40% = $20 max deployed
   dailyLossPausePct: 0.08,    // 8% = $4 daily loss pause
   drawdownPausePct: 0.15,     // 15% = $7.50 drawdown pause
-  minEdge: 0.09,              // 9c net edge (accounts for 2.5% taker fee on 15-min markets)
+  minEdge: 0.06,              // 6c net edge (LMSR removed; edge from momentum + intel signals only)
   minBet: 0.50,               // lower min for $50 bankroll
 };
 

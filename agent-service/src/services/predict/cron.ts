@@ -287,7 +287,7 @@ export async function handlePolymarketScan(taskId: number): Promise<string> {
   let dryRunCount = 0;
 
   for (const market of candidates) {
-    if (market.netEdge < 0.09) continue; // 9c net edge threshold (after taker fees)
+    if (market.netEdge < 0.06) continue; // 6c net edge threshold (LMSR removed, signal-only edge)
     if (market.betAmount < 0.50) continue;
 
     const result = await executePolymarketTrade(market, bankroll);
@@ -307,8 +307,8 @@ export async function handlePolymarketScan(taskId: number): Promise<string> {
   const mode = isPolyDryRun() ? 'DRY RUN' : 'LIVE';
   let result = `[${mode}] Polymarket: ${candidates.length} markets, ${tradesOpened} trades, ${dryRunCount} dry-run, ${tradesBlocked} blocked. Bankroll: $${bankroll.toFixed(2)}`;
 
-  // Check if /predict golive wait is active and we found a qualifying candidate (net edge >= 9c)
-  const topCandidate = candidates.find(c => c.netEdge >= 0.09);
+  // Check if /predict golive wait is active and we found a qualifying candidate (net edge >= 6c)
+  const topCandidate = candidates.find(c => c.netEdge >= 0.06);
   if (topCandidate) {
     const notification = checkEdgeCandidateNotification(
       topCandidate.netEdge,

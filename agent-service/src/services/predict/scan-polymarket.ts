@@ -19,7 +19,7 @@
 
 import { config } from '../../config';
 import { query } from '../../db';
-import { lmsrProb, bayesUpdate, fractionalKelly, rewardScore } from './model';
+import { bayesUpdate, fractionalKelly, rewardScore } from './model';
 import { priceFeed, AssetSignal } from './price-feed';
 import { getIntelSummary, IntelSummary } from './intel-signal';
 
@@ -43,8 +43,10 @@ const DURATIONS = [
 // Polymarket taker fee for 15-min crypto markets (up to 3% at 50% prob; use 2.5% avg)
 const POLY_TAKER_FEE_PCT = 0.025;
 
-// Min NET edge after fee subtraction (raised from 6c gross to 9c net per audit)
-const POLY_MIN_NET_EDGE = 0.09;
+// Min NET edge after fee subtraction. With LMSR removed, edge comes solely from
+// momentum + intel signals. Max single-signal net edge is ~10.8c (strong_up 5min).
+// 6c requires at least 'up' momentum or aligned dual signals.
+const POLY_MIN_NET_EDGE = 0.06;
 
 // How many upcoming windows to check per asset per duration
 const WINDOWS_TO_CHECK = 4;
@@ -100,7 +102,7 @@ export interface PolyCandidate {
   asset: string;
   url: string;
   pYes: number;           // CLOB mid price
-  pLmsr: number;          // LMSR implied probability
+  pLmsr: number;          // baseline probability (midPrice; LMSR removed)
   pBayes: number;         // Bayesian posterior with intel
   edge: number;           // pBayes - pYes
   direction: 'YES' | 'NO';
@@ -283,18 +285,21 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
 
       if (pMarket < 0.10 || pMarket > 0.90) continue; // Skip extreme probabilities
 
-      // LMSR probability from order book quantities
-      const pLmsr = (yesDepth > 0 || noDepth > 0)
-        ? lmsrProb([yesDepth, noDepth], 0, config.PREDICT_POLY_LMSR_B)
-        : pMarket; // fallback to market price if no depth data
+      // Baseline probability = CLOB midPrice (crowd-efficient, no LMSR distortion)
+      const pBase = pMarket;
 
       // Signal 1: Price momentum from Coinbase/Binance feed
-      let pAfterMomentum = pLmsr;
+      let pAfterMomentum = pBase;
       const priceSignal = priceFeed.getSignal(asset);
 
-      if (priceSignal && priceSignal.lastUpdated > Date.now() - 60_000) {
-        const momentumLikelihood = computeMomentumLikelihood(priceSignal, minutes);
-        pAfterMomentum = bayesUpdate(pLmsr, momentumLikelihood.up);
+      const hasMomentumSignal = priceSignal &&
+        priceSignal.lastUpdated > Date.now() - 60_000 &&
+        priceSignal.momentum !== 'neutral' &&
+        priceSignal.momentumStrength > 0.3;
+
+      if (hasMomentumSignal) {
+        const momentumLikelihood = computeMomentumLikelihood(priceSignal!, minutes);
+        pAfterMomentum = bayesUpdate(pBase, momentumLikelihood.up);
       }
 
       // Signal 2: Intel sentiment from X agent shared_signals (decayed + aggregated)
@@ -304,11 +309,21 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
       let intelAligned = false;
       let intelSignalId: number | null = null;
 
-      if (intelSummary && intelSummary.signalCount > 0 && intelSummary.freshestSignalAge < 240) {
-        const intelLikelihood = computeIntelLikelihood(intelSummary, minutes);
+      const hasIntelSignal = intelSummary &&
+        intelSummary.signalCount > 0 &&
+        Math.abs(intelSummary.netSentiment) > 0.2 &&
+        intelSummary.freshestSignalAge < 120;
+
+      if (hasIntelSignal) {
+        const intelLikelihood = computeIntelLikelihood(intelSummary!, minutes);
         pBayes = bayesUpdate(pAfterMomentum, intelLikelihood.up);
-        intelAligned = Math.abs(intelSummary.netSentiment) > 0.1;
+        intelAligned = Math.abs(intelSummary!.netSentiment) > 0.1;
       }
+
+      // Signal gate: require at least one real signal. No signal = no trade.
+      // Without this, midPrice == pBase == pBayes and edge = 0, but floating point
+      // noise could create tiny spurious edges.
+      if (!hasMomentumSignal && !hasIntelSignal) continue;
 
       // Legacy: check old intel signals for signal ID tracking
       const intel = intelSignals.find(s =>
@@ -357,10 +372,10 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
       const momentumStr = priceSignal
         ? `momentum=${priceSignal.momentum} strength=${mStrength.toFixed(2)} (${(priceSignal.return5m * 100).toFixed(2)}% 5m)`
         : 'no price feed';
-      const reasoning = `${direction} bet | LMSR p=${pLmsr.toFixed(4)}, market=${pMarket.toFixed(4)}, ` +
+      const reasoning = `${direction} bet | midPrice=${pBase.toFixed(4)}, ` +
         `${momentumStr}, pMomentum=${pAfterMomentum.toFixed(4)}, ` +
-        `${intel ? `intel ${intel.direction} (${asset})` : 'no intel'}, ` +
-        `gross_edge=${(absGrossEdge * 100).toFixed(1)}c, fee=${(feeImpact * 100).toFixed(1)}c, ` +
+        `${hasIntelSignal ? `intel net=${intelSummary!.netSentiment.toFixed(2)} (${asset})` : 'no intel'}, ` +
+        `pFinal=${pBayes.toFixed(4)}, gross_edge=${(absGrossEdge * 100).toFixed(1)}c, fee=${(feeImpact * 100).toFixed(1)}c, ` +
         `net_edge=${(netEdge * 100).toFixed(1)}c, kelly=${(kellyFrac * 100).toFixed(1)}%, ` +
         `depth=${yesDepth.toFixed(0)}/${noDepth.toFixed(0)}, ${minutes}min market`;
 
@@ -372,7 +387,7 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
         asset,
         url: `https://polymarket.com/event/${eventSlug}`,
         pYes: pMarket,
-        pLmsr,
+        pLmsr: pBase, // store midPrice in p_lmsr column (LMSR removed)
         pBayes,
         edge,
         direction,
