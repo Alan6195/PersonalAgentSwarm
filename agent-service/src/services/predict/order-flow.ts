@@ -321,8 +321,11 @@ class OrderFlowService {
         }
       }
 
-      // NEW_WINDOW check: if we have a pending entry and current window just started
-      // (i.e., we're past the end time and within the first 60s of the new period)
+      // NEW_WINDOW check: if we have a pending entry and current window just ended
+      // (i.e., we're past the end time and within the first 60s after expiry).
+      // The signal was detected on THIS market (closing), but we trade the NEXT
+      // window for the same asset. Find it by looking for the same asset with
+      // endTime > now (the window that just opened).
       if (msUntilEnd < 0 && msUntilEnd > -60_000 && this.pendingEntries.has(conditionId)) {
         const pendingSignal = this.pendingEntries.get(conditionId)!;
         const freshSignal = this.computeSignal(market);
@@ -330,11 +333,33 @@ class OrderFlowService {
         // Confirm signal: strength still above threshold and direction hasn't flipped
         if (freshSignal.signalStrength >= ENTRY_MIN_STRENGTH &&
             freshSignal.entryDirection === pendingSignal.entryDirection) {
-          console.log(
-            `[OrderFlow] NEW_WINDOW CONFIRMED: ${market.asset} ${freshSignal.entryDirection} ` +
-            `OFI60=${freshSignal.ofi60s.toFixed(3)} str=${freshSignal.signalStrength.toFixed(2)}`
-          );
-          this.onSignal?.(freshSignal);
+
+          // Find the NEXT window for this asset (same asset, endTime > now, closest)
+          const nextMarket = this.findNextWindow(market.asset, now);
+          if (nextMarket) {
+            // Build signal with the NEXT market's identifiers but current OFI data
+            const tradeSignal: OrderFlowSignal = {
+              ...freshSignal,
+              conditionId: nextMarket.conditionId,
+              question: nextMarket.question,
+              windowMinutes: nextMarket.windowMinutes,
+              windowEnd: nextMarket.endTime,
+              minutesUntilWindowEnd: (nextMarket.endTime - now) / 60_000,
+              midPrice: nextMarket.midPrice,
+              yesTokenId: nextMarket.yesTokenId,
+              noTokenId: nextMarket.noTokenId,
+            };
+            console.log(
+              `[OrderFlow] NEW_WINDOW CONFIRMED: ${market.asset} ${freshSignal.entryDirection} ` +
+              `OFI60=${freshSignal.ofi60s.toFixed(3)} str=${freshSignal.signalStrength.toFixed(2)} ` +
+              `-> trading next window: "${nextMarket.question.substring(0, 50)}"`
+            );
+            this.onSignal?.(tradeSignal);
+          } else {
+            console.log(
+              `[OrderFlow] NEW_WINDOW CONFIRMED but no next window found for ${market.asset}`
+            );
+          }
         } else {
           console.log(
             `[OrderFlow] NEW_WINDOW CANCELLED: ${market.asset} ` +
@@ -350,6 +375,23 @@ class OrderFlowService {
         this.persistSignal(market).catch(() => {});
       }
     }
+  }
+
+  /**
+   * Find the next active window for a given asset (same asset, endTime > now).
+   * Returns the closest upcoming window, or null if none found.
+   */
+  private findNextWindow(asset: string, now: number): ActiveMarket | null {
+    let best: ActiveMarket | null = null;
+    let bestEnd = Infinity;
+
+    for (const [, m] of this.markets) {
+      if (m.asset === asset && m.endTime > now && m.endTime < bestEnd) {
+        best = m;
+        bestEnd = m.endTime;
+      }
+    }
+    return best;
   }
 
   computeSignal(market: ActiveMarket): OrderFlowSignal {
