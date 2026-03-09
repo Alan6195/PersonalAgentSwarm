@@ -123,6 +123,7 @@ export interface PolyCandidate {
   pAfterMomentum: number;
   priceMomentum: string | null;
   priceReturn5m: number | null;
+  momentumStrength: number; // 0.0-1.0, passed to risk gate for confidence check
   intelSentiment: number | null;
   intelSignalCount: number | null;
   // Fee-adjusted edge
@@ -240,6 +241,14 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
     const analyzed: PolyCandidate[] = [];
 
     for (const { market: m, asset, minutes, eventSlug } of discoveredMarkets) {
+      // Skip markets expiring within 3 minutes (not enough time to analyze + execute)
+      const endTime = new Date(m.endDate).getTime();
+      const minutesRemaining = (endTime - Date.now()) / 60_000;
+      if (minutesRemaining < 3) {
+        console.log(`[PolyScan] Skipping "${m.question}" -- ${minutesRemaining.toFixed(1)}min remaining (< 3min)`);
+        continue;
+      }
+
       // Get market price from Gamma outcomePrices or fetch from CLOB
       let pMarket: number;
       let yesDepth = 0;
@@ -307,9 +316,9 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
       );
       if (intel) intelSignalId = intel.id;
 
-      // Compute edge and direction
+      // Compute edge and direction (bidirectional: YES when model > market, NO when model < market)
       const grossEdge = pBayes - pMarket;
-      const direction = grossEdge > 0 ? 'YES' : 'NO';
+      const direction: 'YES' | 'NO' = grossEdge > 0 ? 'YES' : 'NO';
       const absGrossEdge = Math.abs(grossEdge);
 
       // Subtract taker fee from edge to get net edge
@@ -322,11 +331,14 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
       const edge = grossEdge; // preserve sign for direction
       const absEdge = netEdge; // net edge for threshold + sizing
 
-      // Kelly sizing with Polymarket-specific fraction (15%), using net edge probability
+      // Kelly sizing: use model probability FOR THE DIRECTION WE'RE BETTING
+      // YES bet: pModel = pBayes (prob of UP), odds = 1/pMarket
+      // NO bet: pModel = 1-pBayes (prob of DOWN), odds = 1/(1-pMarket)
+      const pForDirection = direction === 'YES' ? pBayes : (1 - pBayes);
       const decimalOdds = direction === 'YES' ? 1 / pMarket : 1 / (1 - pMarket);
-      const kellyFrac = fractionalKelly(pBayes, decimalOdds, config.PREDICT_POLY_KELLY_FRACTION);
+      const kellyFrac = fractionalKelly(pForDirection, decimalOdds, config.PREDICT_POLY_KELLY_FRACTION);
       const betAmount = Math.min(
-        kellyFrac > 0 ? kellyFrac * bankroll : 0,
+        Math.max(0, kellyFrac) * bankroll,
         bankroll * 0.05 // 5% max per position
       );
 
@@ -341,10 +353,11 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
         volume: volume24h,
       });
 
+      const mStrength = priceSignal?.momentumStrength ?? 0;
       const momentumStr = priceSignal
-        ? `momentum=${priceSignal.momentum} (${(priceSignal.return5m * 100).toFixed(2)}% 5m)`
+        ? `momentum=${priceSignal.momentum} strength=${mStrength.toFixed(2)} (${(priceSignal.return5m * 100).toFixed(2)}% 5m)`
         : 'no price feed';
-      const reasoning = `LMSR p=${pLmsr.toFixed(4)}, market=${pMarket.toFixed(4)}, ` +
+      const reasoning = `${direction} bet | LMSR p=${pLmsr.toFixed(4)}, market=${pMarket.toFixed(4)}, ` +
         `${momentumStr}, pMomentum=${pAfterMomentum.toFixed(4)}, ` +
         `${intel ? `intel ${intel.direction} (${asset})` : 'no intel'}, ` +
         `gross_edge=${(absGrossEdge * 100).toFixed(1)}c, fee=${(feeImpact * 100).toFixed(1)}c, ` +
@@ -380,6 +393,7 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
         pAfterMomentum,
         priceMomentum: priceSignal?.momentum ?? null,
         priceReturn5m: priceSignal?.return5m ?? null,
+        momentumStrength: priceSignal?.momentumStrength ?? 0,
         intelSentiment: intelSummary?.netSentiment ?? null,
         intelSignalCount: intelSummary?.signalCount ?? null,
         grossEdge: absGrossEdge,

@@ -10,8 +10,10 @@
  * - Never more than 40% of bankroll deployed at once
  * - Pause all trading if down 8% in a single day
  * - Pause all trading if drawdown from peak exceeds 15%
- * - Minimum $1 bet (avoid dust positions)
- * - Minimum 4c edge (below this the model has no reliable signal)
+ * - Minimum $1 bet Manifold / $0.50 Polymarket (avoid dust positions)
+ * - Minimum 4c edge Manifold / 9c net edge Polymarket (after taker fees)
+ * - Polymarket: momentum confidence >= 0.4 (replaces VaR95 for binary 50/50 markets)
+ * - Manifold: VaR95 > -0.10 (probability-space confidence check)
  */
 
 import { query, queryOne } from '../../db';
@@ -70,6 +72,7 @@ export interface TradeCandidate {
   edge: number;
   expectedReturn: number;
   pModel: number;
+  momentumStrength?: number; // Polymarket: replaces VaR95 with momentum confidence gate
 }
 
 /**
@@ -86,9 +89,25 @@ export async function validateTrade(candidate: TradeCandidate, bankroll: number)
   const totalExposure = await getTotalOpenExposure(platform);
   const categoryExposure = await getCategoryExposure(platform, category);
 
-  // VaR95 check: probability-space. At 95% confidence, worst-case probability
-  // must be no more than 10pp below model estimate.
-  const var95 = pModel - 1.645 * Math.sqrt(pModel * (1 - pModel));
+  // Signal quality check: platform-specific
+  // - Polymarket (5/15-min crypto): momentum confidence gate (VaR95 is meaningless
+  //   for binary 50/50 markets where pModel hovers near 0.5)
+  // - Manifold (days/weeks): traditional VaR95 probability-space check
+  let signalQualityOk: boolean;
+  let signalQualityLabel: string;
+
+  if (platform === 'polymarket') {
+    // Momentum confidence: only trade when price feed shows strong enough signal.
+    // momentumStrength 0.0-1.0 from price feed; require >= 0.4 to trade.
+    const ms = candidate.momentumStrength ?? 0;
+    signalQualityOk = ms >= 0.4;
+    signalQualityLabel = `momentum_confidence: ${ms.toFixed(2)} (min 0.40)`;
+  } else {
+    // VaR95: at 95% confidence, worst-case probability must be within 10pp of model
+    const var95 = pModel - 1.645 * Math.sqrt(pModel * (1 - pModel));
+    signalQualityOk = var95 > -0.10;
+    signalQualityLabel = `VaR95: ${var95.toFixed(4)} (min -0.10)`;
+  }
 
   // Max drawdown from peak
   const mdd = today.peak_bankroll > 0
@@ -100,7 +119,7 @@ export async function validateTrade(candidate: TradeCandidate, bankroll: number)
     min_bet: betSize >= limits.minBet,
     max_position: betSize <= bankroll * limits.maxPositionPct,
     expected_return_positive: er > 0,
-    var_within_limit: var95 > -0.35,
+    signal_quality: signalQualityOk,
     daily_loss_ok: Math.abs(today.daily_loss) < bankroll * limits.dailyLossPausePct,
     drawdown_ok: mdd < limits.drawdownPausePct,
     category_exposure_ok: (categoryExposure + betSize) <= bankroll * limits.maxCategoryPct,
@@ -112,8 +131,8 @@ export async function validateTrade(candidate: TradeCandidate, bankroll: number)
   if (!checks.edge_sufficient) {
     console.error(`[RiskGate] REJECTED [${platform}]: edge ${edge.toFixed(4)} < ${limits.minEdge}`);
   }
-  if (!checks.var_within_limit) {
-    console.error(`[RiskGate] REJECTED [${platform}]: VaR95 ${var95.toFixed(4)} < -0.35 (pModel=${pModel.toFixed(4)})`);
+  if (!checks.signal_quality) {
+    console.error(`[RiskGate] REJECTED [${platform}]: ${signalQualityLabel}`);
   }
 
   const approved = Object.values(checks).every(Boolean);
@@ -131,29 +150,30 @@ export async function validateTrade(candidate: TradeCandidate, bankroll: number)
  */
 export async function checkSystemPause(platform: string, bankroll: number): Promise<{ paused: boolean; reason: string | null }> {
   const today = await getOrCreateDailyRisk(platform, bankroll);
+  const limits = getRiskLimits(platform);
 
-  if (Math.abs(today.daily_loss) >= bankroll * RISK_LIMITS.dailyLossPausePct) {
+  if (Math.abs(today.daily_loss) >= bankroll * limits.dailyLossPausePct) {
     if (!today.trading_paused) {
       await query(
         `UPDATE daily_risk_state SET trading_paused = true, pause_reason = 'daily_loss_limit', updated_at = NOW() WHERE id = $1`,
         [today.id]
       );
     }
-    return { paused: true, reason: `Daily loss ${(Math.abs(today.daily_loss) / bankroll * 100).toFixed(1)}% exceeds ${RISK_LIMITS.dailyLossPausePct * 100}% limit` };
+    return { paused: true, reason: `Daily loss ${(Math.abs(today.daily_loss) / bankroll * 100).toFixed(1)}% exceeds ${limits.dailyLossPausePct * 100}% limit` };
   }
 
   const mdd = today.peak_bankroll > 0
     ? (today.peak_bankroll - today.current_bankroll) / today.peak_bankroll
     : 0;
 
-  if (mdd >= RISK_LIMITS.drawdownPausePct) {
+  if (mdd >= limits.drawdownPausePct) {
     if (!today.trading_paused) {
       await query(
         `UPDATE daily_risk_state SET trading_paused = true, pause_reason = 'drawdown_limit', updated_at = NOW() WHERE id = $1`,
         [today.id]
       );
     }
-    return { paused: true, reason: `Drawdown ${(mdd * 100).toFixed(1)}% exceeds ${RISK_LIMITS.drawdownPausePct * 100}% limit` };
+    return { paused: true, reason: `Drawdown ${(mdd * 100).toFixed(1)}% exceeds ${limits.drawdownPausePct * 100}% limit` };
   }
 
   return { paused: false, reason: null };

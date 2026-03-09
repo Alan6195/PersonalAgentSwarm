@@ -82,14 +82,18 @@ export async function executePolymarketTrade(
   const isDryRun = isPolyDryRun();
 
   // Risk gate check
+  // Use netEdge (absolute, fee-adjusted) for edge threshold; works for both YES and NO bets
+  // Use pForDirection so risk gate sees the model probability for our chosen side
+  const pForDirection = market.direction === 'YES' ? market.pBayes : (1 - market.pBayes);
   const candidate: TradeCandidate = {
     platform: 'polymarket',
     category: market.category,
     positionSizePct: market.betAmount / bankroll,
     betSize: market.betAmount,
-    edge: market.edge,
+    edge: market.netEdge,  // absolute net edge after fees (positive for both YES and NO)
     expectedReturn: market.expectedRet,
-    pModel: market.pBayes,
+    pModel: pForDirection,
+    momentumStrength: market.momentumStrength,
   };
 
   const riskCheck = await validateTrade(candidate, bankroll);
