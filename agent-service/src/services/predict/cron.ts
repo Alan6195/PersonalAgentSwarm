@@ -147,6 +147,17 @@ export function stopOrderFlowScanner(): void {
 async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
   if (!signal.entryDirection) return;
 
+  // Early check: fetch fresh mid price to reject expired/decided markets.
+  // If mid > 0.85 or mid < 0.15, outcome is already decided — no edge to capture.
+  const { fetchCurrentMidPrice: fetchMidEarly } = await import('./execute-polymarket');
+  const earlyMid = await fetchMidEarly(signal.yesTokenId);
+  if (earlyMid !== null && (earlyMid > 0.85 || earlyMid < 0.15)) {
+    console.log(
+      `[OrderFlow] SKIP: ${signal.asset} mid=${earlyMid.toFixed(4)} — market already decided`
+    );
+    return;
+  }
+
   const isDryRun = isPolyDryRun();
   const mode = isDryRun ? 'DRY RUN' : 'LIVE';
 
