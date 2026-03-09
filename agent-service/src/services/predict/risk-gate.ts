@@ -45,7 +45,7 @@ export const POLY_RISK_LIMITS: RiskLimits = {
   maxPositionPct: 0.05,       // 5% max per trade
   maxCategoryPct: 0.50,       // 50% per category (all OFI trades are crypto; need room for 4 assets)
   maxTotalExposurePct: 0.60,  // 60% max deployed (4 assets * 5% = 20% per cycle, leave headroom)
-  dailyLossPausePct: 0.25,    // 25% daily loss pause (many small bets need room to recover)
+  dailyLossPausePct: 1.00,    // Disabled: no daily loss pause (was 25%)
   drawdownPausePct: 0.30,     // 30% drawdown from peak = hard stop
   minEdge: 0.06,              // 6c net edge (LMSR removed; edge from momentum + intel signals only)
   minBet: 0.50,               // lower min for small bankroll
