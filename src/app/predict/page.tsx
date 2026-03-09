@@ -106,6 +106,25 @@ interface Costs {
   byModel: CostByModel[];
 }
 
+interface PriceFeedAsset {
+  price: number;
+  return5m: number;
+  momentum: string;
+  momentumStrength: number;
+  updatedAt: string;
+}
+
+interface PriceFeedData {
+  connected: boolean;
+  assets: Record<string, PriceFeedAsset>;
+}
+
+interface IntelSignalData {
+  direction: string;
+  strength: number;
+  ageMinutes: number;
+}
+
 interface DashboardData {
   manifold: PlatformStats;
   polymarket: PolymarketStats;
@@ -117,6 +136,9 @@ interface DashboardData {
   equityHistory: EquityPoint[];
   costs?: Costs;
   performance: Performance;
+  priceFeed?: PriceFeedData;
+  intelSignals?: Record<string, IntelSignalData>;
+  lastIntelScan?: string;
 }
 
 // ── Colour tokens ─────────────────────────────────────────────────────────
@@ -401,25 +423,49 @@ export default function PredictPage() {
   const [isLive, setIsLive]   = useState(false);
   const [activeTab, setTab]   = useState<'positions' | 'scans' | 'hypotheses'>('positions');
   const [tick, setTick]       = useState(0);
+  const [lastFetchAt, setLastFetchAt] = useState<number>(Date.now());
+  const [secondsAgo, setSecondsAgo]   = useState(0);
+  const [dataFlash, setDataFlash]     = useState(false);
+  const prevHashRef           = useRef('');
   const rngRef                = useRef(mulberry32(0xabcdef12));
 
-  // Poll /api/predict every 10s
+  // Poll /api/predict every 5s
   const fetchData = useCallback(async () => {
     try {
       const res = await fetch('/api/predict');
       if (!res.ok) return;
       const json = await res.json();
+      // Detect actual data change for flash animation
+      const hash = `${json.polymarket?.bankroll}-${json.polymarket?.trades}-${json.positions?.length}-${json.polymarket?.totalPnl}`;
+      if (prevHashRef.current && prevHashRef.current !== hash) {
+        setDataFlash(true);
+        setTimeout(() => setDataFlash(false), 600);
+      }
+      prevHashRef.current = hash;
       setData(json);
       setIsLive(true);
+      setLastFetchAt(Date.now());
     } catch {
       // stay on mock data
     }
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+  // Poll every 5 seconds
   useEffect(() => {
-    const t = setInterval(() => { fetchData(); setTick(v => v + 1); }, 10_000);
+    const t = setInterval(() => { fetchData(); setTick(v => v + 1); }, 5_000);
     return () => clearInterval(t);
+  }, [fetchData]);
+  // Update "seconds ago" counter every second
+  useEffect(() => {
+    const t = setInterval(() => setSecondsAgo(Math.floor((Date.now() - lastFetchAt) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [lastFetchAt]);
+  // Refetch immediately when tab becomes visible (browsers throttle setInterval in background tabs)
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') fetchData(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
   }, [fetchData]);
 
   // Animate equity on mock data
@@ -457,6 +503,7 @@ export default function PredictPage() {
         ::-webkit-scrollbar-thumb { background: #0d2a0d; border-radius: 1px; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes ping { 75%,100% { transform: scale(2); opacity: 0; } }
+        @keyframes dataFlash { 0% { background: rgba(0,255,65,0.08); } 100% { background: transparent; } }
         @font-face { font-family: 'JetBrains Mono'; src: local('JetBrains Mono'); }
       `}</style>
 
@@ -480,12 +527,15 @@ export default function PredictPage() {
           <span style={{ fontSize: 9, color: isLive ? C.green : C.yellow }}>{isLive ? 'LIVE' : 'MOCK'}</span>
         </span>
         <span style={{ fontSize: 9, color: C.dim }}>POLYMARKET</span>
-        <span style={{ fontSize: 9, color: C.dim }}>10s poll</span>
+        <span style={{ fontSize: 9, color: secondsAgo <= 1 ? C.green : C.dim, transition: 'color 0.3s' }}>
+          {secondsAgo <= 1 ? '● synced' : `${secondsAgo}s ago`}
+        </span>
+        <span style={{ fontSize: 9, color: C.dim }}>5s poll</span>
         <Cursor />
       </div>
 
       {/* ── KPI strip ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', borderBottom: `1px solid ${C.border}` }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', borderBottom: `1px solid ${C.border}`, animation: dataFlash ? 'dataFlash 0.6s ease-out' : 'none' }}>
         {[
           { label: 'BANKROLL',   value: fmtUsd(bal),                    sub: fmt2(p.bankrollChange),              color: C.green },
           { label: 'WIN RATE',   value: pct(wr),                        sub: `${p.wins}W / ${p.losses}L`,        color: wr >= 0.55 ? C.green : wr > 0 ? C.yellow : C.text },
@@ -545,6 +595,92 @@ export default function PredictPage() {
               </div>
             ))}
           </Panel>
+          {/* Live Prices from Coinbase/Binance feed */}
+          <Panel title="Live Prices">
+            {(() => {
+              const pf = data.priceFeed;
+              const assets = ['BTC', 'ETH', 'SOL', 'XRP'];
+              if (!pf || !pf.assets || Object.keys(pf.assets).length === 0) {
+                return <div style={{ padding: '10px 8px', fontSize: 9, color: C.dim }}>Waiting for price feed...</div>;
+              }
+              const ageStr = () => {
+                const any = Object.values(pf.assets)[0];
+                if (!any?.updatedAt) return '';
+                const s = Math.floor((Date.now() - new Date(any.updatedAt).getTime()) / 1000);
+                return s < 60 ? `${s}s ago` : `${Math.floor(s / 60)}m ago`;
+              };
+              return (
+                <>
+                  {assets.map(a => {
+                    const d = pf.assets[a];
+                    if (!d || !d.price) return null;
+                    const ret = d.return5m * 100;
+                    const retColor = Math.abs(ret) < 0.1 ? C.text : ret > 0 ? C.green : C.red;
+                    const arrow = ret > 0.1 ? '\u25B2' : ret < -0.1 ? '\u25BC' : '\u2192';
+                    const hasSignal = Math.abs(ret) > 0.3;
+                    return (
+                      <div key={a} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 8px', borderBottom: `1px solid ${C.border2}`, fontSize: 10, fontFamily: 'monospace' }}>
+                        <span style={{ color: C.text, width: 30 }}>{a}</span>
+                        <span style={{ color: C.white, flex: 1, textAlign: 'right', marginRight: 8 }}>
+                          ${d.price < 10 ? d.price.toFixed(4) : d.price < 1000 ? d.price.toFixed(2) : d.price.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                        </span>
+                        <span style={{ color: retColor, width: 80, textAlign: 'right' }}>
+                          {arrow} {ret >= 0 ? '+' : ''}{ret.toFixed(2)}% 5m
+                        </span>
+                        {hasSignal && <span style={{ color: C.green, marginLeft: 4, fontSize: 7 }}>{'\u25CF'}</span>}
+                      </div>
+                    );
+                  })}
+                  <div style={{ padding: '3px 8px', fontSize: 8, color: C.dim }}>
+                    FEED: <span style={{ color: pf.connected ? C.green : C.red }}>{'\u25CF'} {pf.connected ? 'LIVE' : 'DISCONNECTED'}</span>
+                    {' '}{ageStr()}
+                  </div>
+                </>
+              );
+            })()}
+          </Panel>
+
+          {/* Intel Signals from X agent */}
+          <Panel title="Intel Signals">
+            {(() => {
+              const intel = data.intelSignals;
+              const assets = ['BTC', 'ETH', 'SOL', 'XRP'];
+              if (!intel || Object.keys(intel).length === 0) {
+                return <div style={{ padding: '10px 8px', fontSize: 9, color: C.dim }}>No intel signals</div>;
+              }
+              return (
+                <>
+                  {assets.map(a => {
+                    const s = intel[a];
+                    if (!s) return (
+                      <div key={a} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 8px', borderBottom: `1px solid ${C.border2}`, fontSize: 10, fontFamily: 'monospace' }}>
+                        <span style={{ color: C.text, width: 30 }}>{a}</span>
+                        <span style={{ color: C.dim }}>{'\u2192'} neutral</span>
+                      </div>
+                    );
+                    const isBull = ['bullish', 'accelerating', 'positive'].includes(s.direction);
+                    const isBear = ['bearish', 'decelerating', 'negative'].includes(s.direction);
+                    const arrow = isBull ? '\u25B2' : isBear ? '\u25BC' : '\u2192';
+                    const color = isBull ? C.green : isBear ? C.red : C.text;
+                    return (
+                      <div key={a} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 8px', borderBottom: `1px solid ${C.border2}`, fontSize: 10, fontFamily: 'monospace' }}>
+                        <span style={{ color: C.text, width: 30 }}>{a}</span>
+                        <span style={{ color }}>{arrow} {s.direction}</span>
+                        <span style={{ color: C.dim, fontSize: 9, marginLeft: 4 }}>{s.strength.toFixed(2)}</span>
+                        <span style={{ color: C.dim, fontSize: 8, marginLeft: 'auto' }}>{s.ageMinutes}m ago</span>
+                      </div>
+                    );
+                  })}
+                  {data.lastIntelScan && (
+                    <div style={{ padding: '3px 8px', fontSize: 8, color: C.dim }}>
+                      Last scan: {timeAgo(data.lastIntelScan)}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+          </Panel>
+
           <RiskPanel risk={risk} />
         </div>
 
