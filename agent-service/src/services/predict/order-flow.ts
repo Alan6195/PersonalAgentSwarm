@@ -96,6 +96,9 @@ class OrderFlowService {
   private isConnected = false;
   private reconnectAttempts = 0;
   private subscribedTokens: string[] = [];
+  private msgCount = 0;
+  private tradeCount = 0;
+  private lastStatusLog = 0;
 
   /** Register handler for when a tradeable signal fires */
   setSignalHandler(handler: (signal: OrderFlowSignal) => void): void {
@@ -257,13 +260,31 @@ class OrderFlowService {
   // ── Message handling ────────────────────────────────────────────────
 
   private handleMessage(msg: Record<string, unknown>): void {
+    this.msgCount++;
     const eventType = msg.event_type as string;
 
+    // Log first few messages for debugging subscription format
+    if (this.msgCount <= 5) {
+      console.log(`[OrderFlow] WS msg #${this.msgCount}: event_type=${eventType}, keys=${Object.keys(msg).join(',')}`);
+    }
+
     if (eventType === 'last_trade_price') {
+      this.tradeCount++;
       this.handleTrade(msg);
     }
-    // We could also handle 'book' and 'best_bid_ask' for richer signals,
-    // but last_trade_price gives us the core OFI data.
+
+    // Periodic status log every 60s
+    const now = Date.now();
+    if (now - this.lastStatusLog > 60_000) {
+      this.lastStatusLog = now;
+      let totalTrades = 0;
+      for (const [, trades] of this.tradeHistory) totalTrades += trades.length;
+      console.log(
+        `[OrderFlow] Status: ${this.msgCount} msgs, ${this.tradeCount} trades received, ` +
+        `${totalTrades} in window, ${this.markets.size} markets, ` +
+        `${this.pendingEntries.size} pending signals`
+      );
+    }
   }
 
   private handleTrade(msg: Record<string, unknown>): void {
