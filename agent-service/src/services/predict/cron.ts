@@ -8,7 +8,7 @@
 import { scanManifold, analyzeMarkets, validateModelAccess } from './scan';
 import { executeTrade, reconcilePositions, getCurrentBankroll, getManifoldBalance } from './execute';
 import { scanPolymarket } from './scan-polymarket';
-import { executePolymarketTrade, getUSDCBalance } from './execute-polymarket';
+import { executePolymarketTrade, getUSDCBalance, reconcilePolymarketPositions } from './execute-polymarket';
 import { checkEdgeCandidateNotification } from './telegram';
 import { resetDailyRisk } from './risk-gate';
 import { runWeeklyReview } from './learn';
@@ -193,16 +193,33 @@ export async function handleDailyRiskReset(): Promise<string> {
 
 /**
  * Resolution check: poll open positions for market resolution
- * Schedule: every 30 minutes
+ * Schedule: every 30 minutes (Manifold) + every 5 minutes (Polymarket)
  */
 export async function handleResolutionCheck(taskId: number): Promise<string> {
-  const result = await reconcilePositions('manifold');
+  const parts: string[] = [];
 
-  if (result.closed === 0) {
-    return `Checked ${result.checked} positions. None resolved.`;
+  // Manifold resolution
+  const manifold = await reconcilePositions('manifold');
+  if (manifold.closed > 0) {
+    parts.push(`Manifold: ${manifold.closed} resolved (${manifold.wins}W/${manifold.losses}L, ${manifold.totalPnl >= 0 ? '+' : ''}$${manifold.totalPnl.toFixed(2)})`);
   }
 
-  return `Checked ${result.checked} positions. ${result.closed} resolved: ${result.wins}W/${result.losses}L, P&L: ${result.totalPnl >= 0 ? '+' : ''}${result.totalPnl.toFixed(2)}`;
+  // Polymarket resolution (5-15 min markets need frequent checking)
+  if (config.POLYMARKET_API_KEY) {
+    const poly = await reconcilePolymarketPositions();
+    if (poly.closed > 0) {
+      parts.push(`Polymarket: ${poly.closed} resolved (${poly.wins}W/${poly.losses}L, ${poly.totalPnl >= 0 ? '+' : ''}$${poly.totalPnl.toFixed(2)})`);
+    }
+    if (poly.checked > 0 && poly.closed === 0) {
+      parts.push(`Polymarket: ${poly.checked} open, none resolved yet`);
+    }
+  }
+
+  if (parts.length === 0) {
+    return `Checked ${manifold.checked} Manifold positions. None resolved.`;
+  }
+
+  return parts.join(' | ');
 }
 
 /**

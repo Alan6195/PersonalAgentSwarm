@@ -699,6 +699,171 @@ export async function getUSDCBalance(): Promise<number | null> {
   }
 }
 
+/**
+ * Reconcile open Polymarket positions. Checks if markets have resolved
+ * via the Gamma Markets API and updates position status/P&L.
+ *
+ * For Up/Down 5-15 min markets, resolution happens automatically after expiry.
+ * Returns summary of resolved positions.
+ */
+export async function reconcilePolymarketPositions(): Promise<{
+  checked: number;
+  closed: number;
+  wins: number;
+  losses: number;
+  totalPnl: number;
+}> {
+  const result = { checked: 0, closed: 0, wins: 0, losses: 0, totalPnl: 0 };
+
+  const positions = await query<any>(
+    `SELECT id, market_id, question, direction, bet_size, fill_price, edge
+     FROM market_positions WHERE platform = $1 AND status = $2`,
+    ['polymarket', 'open']
+  );
+
+  if (positions.length === 0) return result;
+
+  result.checked = positions.length;
+  console.log(`[PolyResolve] Checking ${positions.length} open Polymarket positions`);
+
+  for (const pos of positions) {
+    try {
+      // Query Gamma Markets API for market resolution
+      // conditionId is stored as market_id
+      const res = await fetch(
+        `https://gamma-api.polymarket.com/markets?condition_id=${pos.market_id}`
+      );
+
+      if (!res.ok) {
+        console.warn(`[PolyResolve] Gamma API error for ${pos.market_id}: ${res.status}`);
+        continue;
+      }
+
+      const markets = await res.json() as any[];
+      if (!markets || markets.length === 0) {
+        // Check if market has expired based on question text (fallback)
+        // Up/Down markets have timestamps in their questions
+        const expired = isMarketExpired(pos.question);
+        if (expired) {
+          // Market expired but no resolution data yet — mark as expired pending
+          // Check again later; Gamma API may take a few minutes after expiry
+          console.log(`[PolyResolve] Market expired but no resolution data: ${pos.question.substring(0, 50)}`);
+        }
+        continue;
+      }
+
+      const market = markets[0];
+
+      // Check if market is resolved
+      if (!market.resolved) {
+        // Check if expired — some markets take a few minutes to resolve after expiry
+        if (isMarketExpired(pos.question)) {
+          const minutesSinceExpiry = getMinutesSinceExpiry(pos.question);
+          if (minutesSinceExpiry > 30) {
+            // Auto-close as loss if unresolved 30+ minutes after expiry
+            console.warn(`[PolyResolve] Force-closing unresolved position (${minutesSinceExpiry.toFixed(0)}min post-expiry): ${pos.question.substring(0, 50)}`);
+            await closePosition(pos.id, 'closed_loss', -parseFloat(pos.bet_size), 'Auto-closed: market expired but never resolved');
+            result.closed++;
+            result.losses++;
+            result.totalPnl -= parseFloat(pos.bet_size);
+          }
+        }
+        continue;
+      }
+
+      // Market resolved — determine outcome
+      // resolved_to: "YES" or "NO" (or a probability for some markets)
+      const resolvedTo = market.outcome || market.resolved_to || '';
+      const won = (pos.direction === 'YES' && resolvedTo === 'Yes') ||
+                  (pos.direction === 'NO' && resolvedTo === 'No');
+
+      // P&L calculation:
+      // Won: receive $1 per share, paid fill_price per share. Profit = shares * (1 - fill_price) - fees
+      // Lost: receive $0, paid fill_price per share. Loss = -bet_size
+      const fillPrice = parseFloat(pos.fill_price) || 0.50;
+      const betSize = parseFloat(pos.bet_size);
+      const shares = betSize / fillPrice;
+      const pnl = won
+        ? shares * (1 - fillPrice) * 0.975  // 2.5% fee on winnings
+        : -betSize;
+
+      const status = won ? 'closed_win' : 'closed_loss';
+      await closePosition(pos.id, status, pnl, `Resolved: ${resolvedTo}`);
+
+      result.closed++;
+      if (won) result.wins++;
+      else result.losses++;
+      result.totalPnl += pnl;
+
+      console.log(`[PolyResolve] ${won ? 'WIN' : 'LOSS'}: ${pos.direction} on "${pos.question.substring(0, 50)}" -> ${resolvedTo}. P&L: $${pnl.toFixed(2)}`);
+    } catch (err) {
+      console.warn(`[PolyResolve] Error checking position #${pos.id}:`, (err as Error).message);
+    }
+  }
+
+  if (result.closed > 0) {
+    console.log(`[PolyResolve] Resolved ${result.closed} positions: ${result.wins}W/${result.losses}L, P&L: $${result.totalPnl.toFixed(2)}`);
+  }
+
+  return result;
+}
+
+/**
+ * Close a position with the given status and P&L.
+ */
+async function closePosition(positionId: number, status: string, pnl: number, notes: string): Promise<void> {
+  const betSize = await query<any>(
+    `SELECT bet_size FROM market_positions WHERE id = $1`, [positionId]
+  ).then(r => parseFloat(r[0]?.bet_size || '0'));
+
+  await query(
+    `UPDATE market_positions
+     SET status = $1, pnl = $2, pnl_pct = $3, closed_at = NOW(), notes = $4
+     WHERE id = $5`,
+    [status, pnl, betSize > 0 ? pnl / betSize : 0, notes, positionId]
+  );
+
+  // Update risk state
+  const { recordTradeClosed, updateDailyRisk } = await import('./risk-gate');
+  const bankroll = 50; // TODO: get from config or DB
+  await recordTradeClosed('polymarket', betSize, bankroll).catch(() => {});
+  if (pnl !== 0) {
+    await updateDailyRisk('polymarket', pnl, bankroll).catch(() => {});
+  }
+}
+
+/**
+ * Check if a market has expired based on the question text.
+ * Up/Down markets have times like "March 9, 12:15PM-12:20PM ET"
+ */
+function isMarketExpired(question: string): boolean {
+  return getMinutesSinceExpiry(question) > 0;
+}
+
+function getMinutesSinceExpiry(question: string): number {
+  // Extract end time from question like "March 9, 12:20PM ET"
+  const match = question.match(/(\d{1,2}):(\d{2})(AM|PM)\s*ET$/i);
+  if (!match) return -1;
+
+  let hours = parseInt(match[1]);
+  const minutes = parseInt(match[2]);
+  const isPM = match[3].toUpperCase() === 'PM';
+
+  if (isPM && hours !== 12) hours += 12;
+  if (!isPM && hours === 12) hours = 0;
+
+  // Convert ET to UTC (ET = UTC-4 during EDT, UTC-5 during EST)
+  // March is EDT (UTC-4)
+  const now = new Date();
+  const nowUTC = now.getTime();
+
+  // Build the expiry time in UTC
+  const expiry = new Date(now);
+  expiry.setUTCHours(hours + 4, minutes, 0, 0); // EDT = UTC-4
+
+  return (nowUTC - expiry.getTime()) / 60000;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
