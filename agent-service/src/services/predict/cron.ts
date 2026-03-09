@@ -299,19 +299,8 @@ async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
     console.log(`[OrderFlow] Limit price: ${limitPriceOverride.toFixed(4)} (${signal.entryDirection}, mid=${currentMid.toFixed(4)})`);
 
     const result = await executePolymarketTrade(candidate, bankroll);
-
-    if (result.success) {
-      if (telegramNotifyFn) {
-        try {
-          await telegramNotifyFn(
-            `ORDER FLOW TRADE\n` +
-            `${signal.asset} ${signal.entryDirection}\n` +
-            `OFI: ${(signal.ofi60s * 100).toFixed(1)}% | Strength: ${(signal.signalStrength * 100).toFixed(0)}%\n` +
-            `Size: $${betSize.toFixed(2)} | Large trade: ${signal.largeTradeDetected ? 'yes' : 'no'}`
-          );
-        } catch { /* non-critical */ }
-      }
-    }
+    // No per-trade Telegram notification; too noisy with 4 trades every 5 min.
+    // Wins/losses and daily summary are reported via other cron jobs.
   } catch (err: any) {
     console.error(`[OrderFlow] Execution error: ${err.message}`);
   }
