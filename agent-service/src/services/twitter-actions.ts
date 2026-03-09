@@ -4,6 +4,8 @@ import * as imageStrategy from './image-strategy';
 import type { ImageStyle } from './image-strategy';
 import * as xIntelligence from './x-intelligence';
 import { recordPost } from './analytics-ingestion';
+import { maybeLogHypothesis } from './hypothesis-engine';
+import { query as dbQuery } from '../db';
 
 export interface TwitterActionResult {
   actionTaken: boolean;
@@ -76,7 +78,9 @@ export async function processTwitterActions(
       // Post tweet with media
       const posted = await twitter.postTweetWithMedia(tweetText, mediaId, taskId);
       // Record for analytics (fire-and-forget)
-      recordPost({ tweetId: posted.id, content: tweetText, contentType: 'tweet_with_image', hasMedia: true, mediaType: 'image', taskId, cronJobName }).catch(e => console.warn('[Analytics] recordPost failed:', e.message));
+      const imgVisualStrategy = `${imageStyle || 'auto'}:${imagePrompt.substring(0, 80)}`;
+      recordPost({ tweetId: posted.id, content: tweetText, contentType: 'tweet_with_image', hasMedia: true, mediaType: 'image', taskId, cronJobName, visualStrategy: imgVisualStrategy }).catch(e => console.warn('[Analytics] recordPost failed:', e.message));
+      maybeLogHypothesis({ tweetId: posted.id, contentType: 'tweet_with_image', visualStrategy: imgVisualStrategy }).catch(() => {});
       const cleanResponse = agentResponse.replace(stripRegex, '').trim();
       const providerNote = imageResult.photographer
         ? ` (photo by ${imageResult.photographer})`
@@ -113,15 +117,44 @@ export async function processTwitterActions(
 
   // ------------------------------------------------------------------
   // [ACTION:TWEET_WITH_VIDEO]
-  // VIDEO_PROMPT: description of the video to generate
-  // TWEET: the tweet text
+  // Structured format: SUBJECT/ACTION/MOOD/METAPHOR_LINK fields
+  // Legacy format: flat VIDEO_PROMPT line
   // ------------------------------------------------------------------
-  const videoMatch = agentResponse.match(
-    /\[ACTION:TWEET_WITH_VIDEO\]\s*VIDEO_PROMPT:\s*(.+?)\s*\nTWEET:\s*(.+?)(?:\n\n|\[ACTION:|$)/s
+  const structuredVideoMatch = agentResponse.match(
+    /\[ACTION:TWEET_WITH_VIDEO\]\s*VIDEO_PROMPT:\s*\nSUBJECT:\s*(.+?)\s*\nACTION:\s*(.+?)\s*\nMOOD:\s*(.+?)\s*\nMETAPHOR_LINK:\s*(.+?)\s*\nTWEET:\s*(.+?)(?:\n\n|\[ACTION:|$)/s
   );
-  if (videoMatch) {
-    const videoPrompt = videoMatch[1].trim();
-    const tweetText = videoMatch[2].trim();
+  const flatVideoMatch = !structuredVideoMatch
+    ? agentResponse.match(
+        /\[ACTION:TWEET_WITH_VIDEO\]\s*VIDEO_PROMPT:\s*(.+?)\s*\nTWEET:\s*(.+?)(?:\n\n|\[ACTION:|$)/s
+      )
+    : null;
+
+  if (structuredVideoMatch || flatVideoMatch) {
+    let videoPrompt: string;
+    let tweetText: string;
+    let metaphorLink: string | undefined;
+
+    if (structuredVideoMatch) {
+      const subject = structuredVideoMatch[1].trim();
+      const action = structuredVideoMatch[2].trim();
+      const mood = structuredVideoMatch[3].trim();
+      metaphorLink = structuredVideoMatch[4].trim();
+      tweetText = structuredVideoMatch[5].trim();
+      // Concatenate structured fields into one Runway prompt
+      videoPrompt = `${subject}. ${action}. ${mood}`;
+      console.log(`[TwitterActions] Structured video prompt parsed. Metaphor: ${metaphorLink}`);
+    } else {
+      videoPrompt = flatVideoMatch![1].trim();
+      tweetText = flatVideoMatch![2].trim();
+      metaphorLink = `flat:${videoPrompt.substring(0, 80)}`;
+      console.log('[TwitterActions] Legacy flat video prompt parsed');
+    }
+
+    // Regex to strip the full action block (handles both formats)
+    const stripRegex = structuredVideoMatch
+      ? /\[ACTION:TWEET_WITH_VIDEO\]\s*VIDEO_PROMPT:\s*\nSUBJECT:\s*.+?\s*\nACTION:\s*.+?\s*\nMOOD:\s*.+?\s*\nMETAPHOR_LINK:\s*.+?\s*\nTWEET:\s*.+?(?:\n\n|\[ACTION:|$)/s
+      : /\[ACTION:TWEET_WITH_VIDEO\]\s*VIDEO_PROMPT:\s*.+?\s*\nTWEET:\s*.+?(?:\n\n|\[ACTION:|$)/s;
+
     try {
       // Generate video via Runway
       const videoUrl = await runway.generateVideo(videoPrompt);
@@ -129,11 +162,9 @@ export async function processTwitterActions(
       const mediaId = await twitter.uploadMediaFromUrl(videoUrl, 'video');
       // Post tweet with media
       const posted = await twitter.postTweetWithMedia(tweetText, mediaId, taskId);
-      recordPost({ tweetId: posted.id, content: tweetText, contentType: 'tweet_with_video', hasMedia: true, mediaType: 'video', taskId, cronJobName }).catch(e => console.warn('[Analytics] recordPost failed:', e.message));
-      const cleanResponse = agentResponse.replace(
-        /\[ACTION:TWEET_WITH_VIDEO\]\s*VIDEO_PROMPT:\s*.+?\s*\nTWEET:\s*.+?(?:\n\n|\[ACTION:|$)/s,
-        ''
-      ).trim();
+      recordPost({ tweetId: posted.id, content: tweetText, contentType: 'tweet_with_video', hasMedia: true, mediaType: 'video', taskId, cronJobName, visualStrategy: metaphorLink }).catch(e => console.warn('[Analytics] recordPost failed:', e.message));
+      maybeLogHypothesis({ tweetId: posted.id, contentType: 'tweet_with_video', visualStrategy: metaphorLink }).catch(() => {});
+      const cleanResponse = agentResponse.replace(stripRegex, '').trim();
       return {
         actionTaken: true,
         actionType: 'tweet_with_video',
@@ -146,10 +177,7 @@ export async function processTwitterActions(
       try {
         const posted = await twitter.postTweet(tweetText, taskId);
         recordPost({ tweetId: posted.id, content: tweetText, contentType: 'tweet', taskId, cronJobName }).catch(e => console.warn('[Analytics] recordPost failed:', e.message));
-        const cleanResponse = agentResponse.replace(
-          /\[ACTION:TWEET_WITH_VIDEO\]\s*VIDEO_PROMPT:\s*.+?\s*\nTWEET:\s*.+?(?:\n\n|\[ACTION:|$)/s,
-          ''
-        ).trim();
+        const cleanResponse = agentResponse.replace(stripRegex, '').trim();
         return {
           actionTaken: true,
           actionType: 'tweet_video_fallback',
@@ -256,6 +284,13 @@ export async function processTwitterActions(
     try {
       const posted = await twitter.replyToTweet(tweetId, replyText, taskId);
       recordPost({ tweetId: posted.id, content: replyText, contentType: 'reply', taskId, cronJobName }).catch(e => console.warn('[Analytics] recordPost failed:', e.message));
+      // Track reply outcome (fire-and-forget)
+      dbQuery(
+        `INSERT INTO reply_outcomes (reply_tweet_id, target_tweet_id, reply_content)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (reply_tweet_id) DO NOTHING`,
+        [posted.id, tweetId, replyText]
+      ).catch(() => {});
       const cleanResponse = agentResponse.replace(
         /\[ACTION:REPLY:\d+\]\s*.+?(?:\n\n|\[ACTION:|$)/s,
         ''

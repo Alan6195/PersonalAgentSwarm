@@ -8,10 +8,16 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { query, queryOne } from '../../db';
 import { getCurrentBankroll, getTradeStats, getManifoldBalance } from './execute';
+import { getUSDCBalance } from './execute-polymarket';
 import { RISK_LIMITS } from './risk-gate';
+import { priceFeed } from './price-feed';
+import { config, isPolyDryRun, setConfigOverride, removeConfigOverride } from '../../config';
 
 let lastScanAt = 0;
 const SCAN_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
+// One-time notification flag: fires when first edge > 6c candidate found after /predict golive wait
+let notifyOnFirstEdgeCandidate = false;
 
 /**
  * Handle /predict <subcommand>
@@ -44,9 +50,18 @@ export async function handlePredictCommand(
       case 'gate':
         await sendGateProgress(chatId, bot);
         break;
+      case 'golive':
+        await handleGoLive(chatId, bot);
+        break;
+      case 'golive confirm':
+        await handleGoLiveConfirm(chatId, bot);
+        break;
+      case 'golive wait':
+        await handleGoLiveWait(chatId, bot);
+        break;
       default:
         await bot.sendMessage(chatId,
-          `Unknown subcommand: \`${sub}\`\n\nUsage:\n/predict status\n/predict positions\n/predict scan\n/predict pause\n/predict resume\n/predict gate`,
+          `Unknown subcommand: \`${sub}\`\n\nUsage:\n/predict status\n/predict positions\n/predict scan\n/predict pause\n/predict resume\n/predict gate\n/predict golive`,
           { parse_mode: 'Markdown' }
         );
     }
@@ -198,4 +213,181 @@ async function sendGateProgress(chatId: number, bot: TelegramBot): Promise<void>
   }
 
   await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
+}
+
+// ── Go Live: dry-run -> live USDC transition ────────────────────────────
+
+async function handleGoLive(chatId: number, bot: TelegramBot): Promise<void> {
+  // Already live?
+  if (!isPolyDryRun()) {
+    await bot.sendMessage(chatId, 'Already in LIVE mode. Send /predict pause to halt trading.');
+    return;
+  }
+
+  // Run pre-flight checks
+  const checks: { label: string; pass: boolean; detail: string }[] = [];
+
+  // 1. Price feed connected
+  const btcSignal = priceFeed.getSignal('BTC');
+  const tickAge = btcSignal ? Math.round((Date.now() - btcSignal.lastUpdated) / 1000) : null;
+  checks.push({
+    label: 'Price feed connected',
+    pass: !!btcSignal && tickAge !== null && tickAge < 120,
+    detail: tickAge !== null ? `last tick: ${tickAge}s ago` : 'no data',
+  });
+
+  // 2. Wallet key configured
+  const hasWallet = !!config.POLYMARKET_WALLET_KEY;
+  checks.push({
+    label: 'Wallet key configured',
+    pass: hasWallet,
+    detail: hasWallet ? 'set' : 'POLYMARKET_WALLET_KEY not set',
+  });
+
+  // 3. USDC balance
+  const usdcBalance = await getUSDCBalance();
+  checks.push({
+    label: 'USDC balance',
+    pass: usdcBalance !== null && usdcBalance >= 10,
+    detail: usdcBalance !== null ? `$${usdcBalance.toFixed(2)} on Polygon` : 'could not fetch (RPC not configured)',
+  });
+
+  // 4. Recent scan found candidates
+  const recentScan = await queryOne<{ count: string }>(
+    `SELECT COUNT(*) as count FROM market_scans
+     WHERE platform = 'polymarket' AND scanned_at > NOW() - INTERVAL '2 hours'`
+  );
+  const recentScanCount = parseInt(recentScan?.count || '0');
+  checks.push({
+    label: 'Recent scans running',
+    pass: recentScanCount > 0,
+    detail: recentScanCount > 0 ? `${recentScanCount} in last 2h` : 'no scans in last 2h',
+  });
+
+  // 5. Dry-run candidates with net edge > 9c
+  const edgeCandidates = await queryOne<{ count: string }>(
+    `SELECT COUNT(*) as count FROM market_scans
+     WHERE platform = 'polymarket'
+       AND COALESCE(net_edge, abs_edge) > 0.09
+       AND scanned_at > NOW() - INTERVAL '24 hours'`
+  );
+  const edgeCount = parseInt(edgeCandidates?.count || '0');
+  checks.push({
+    label: 'Candidates with net edge > 9c (24h)',
+    pass: edgeCount > 0,
+    detail: edgeCount > 0 ? `${edgeCount} found` : 'none yet',
+  });
+
+  // 6. Risk gate functioning
+  const riskScans = await queryOne<{ count: string }>(
+    `SELECT COUNT(*) as count FROM market_scans
+     WHERE platform = 'polymarket'
+       AND reward_score IS NOT NULL
+       AND scanned_at > NOW() - INTERVAL '24 hours'`
+  );
+  const riskWorking = parseInt(riskScans?.count || '0') > 0;
+  checks.push({
+    label: 'Risk gate functioning',
+    pass: riskWorking,
+    detail: riskWorking ? 'scans scored' : 'no scored scans in 24h',
+  });
+
+  // 7. No agent errors in last 24h
+  const errorRow = await queryOne<{ count: string }>(
+    `SELECT COUNT(*) as count FROM cron_runs cr
+     JOIN cron_jobs cj ON cr.cron_job_id = cj.id
+     WHERE cj.name LIKE 'Predict%'
+       AND cr.status = 'error'
+       AND cr.started_at > NOW() - INTERVAL '24 hours'`
+  );
+  const errors = parseInt(errorRow?.count || '0');
+  checks.push({
+    label: 'No agent errors (24h)',
+    pass: errors === 0,
+    detail: errors === 0 ? 'clean' : `${errors} error(s)`,
+  });
+
+  // Verdict
+  const allPass = checks.every(c => c.pass);
+
+  let msg = `PRE-FLIGHT CHECK: DRY RUN -> LIVE USDC\n\n`;
+  msg += `Technical\n`;
+  for (const c of checks) {
+    msg += `${c.pass ? '✅' : '❌'} ${c.label} (${c.detail})\n`;
+  }
+
+  if (allPass) {
+    msg += `\nVERDICT: READY\nAll checks passed.\n`;
+  } else {
+    const failures = checks.filter(c => !c.pass);
+    msg += `\nVERDICT: NOT READY\n`;
+    msg += `Reason: ${failures.map(f => f.label).join(', ')}\n`;
+  }
+
+  msg += `\nSend /predict golive confirm to ${allPass ? 'go live' : 'override and go live anyway'}.`;
+  msg += `\nSend /predict golive wait to keep monitoring (default).`;
+
+  await bot.sendMessage(chatId, msg);
+}
+
+async function handleGoLiveConfirm(chatId: number, bot: TelegramBot): Promise<void> {
+  if (!isPolyDryRun()) {
+    await bot.sendMessage(chatId, 'Already in LIVE mode.');
+    return;
+  }
+
+  // Flip dry run to false
+  await setConfigOverride('PREDICT_POLY_DRY_RUN', 'false');
+
+  const bankroll = config.PREDICT_POLY_STARTING_BANKROLL;
+  const maxBet = (bankroll * 0.05).toFixed(2);
+
+  const msg = [
+    '✅ LIVE MODE ACTIVATED',
+    '',
+    `First real USDC trade will execute on next scan with edge > 6c.`,
+    `Max bet size: $${maxBet} (5% of $${bankroll.toFixed(0)})`,
+    '',
+    'Send /predict pause to halt immediately if needed.',
+  ].join('\n');
+
+  await bot.sendMessage(chatId, msg);
+}
+
+async function handleGoLiveWait(chatId: number, bot: TelegramBot): Promise<void> {
+  if (!isPolyDryRun()) {
+    await bot.sendMessage(chatId, 'Already in LIVE mode. This command is for dry-run mode only.');
+    return;
+  }
+
+  notifyOnFirstEdgeCandidate = true;
+  await bot.sendMessage(chatId,
+    "Continuing dry-run. I'll notify you when the first edge > 6c candidate appears."
+  );
+}
+
+/**
+ * Called by scan loop after each Polymarket scan to check if we should
+ * send a one-time notification about a qualifying candidate.
+ */
+export function checkEdgeCandidateNotification(
+  topEdge: number,
+  question: string,
+): { shouldNotify: boolean; message: string } {
+  if (!notifyOnFirstEdgeCandidate) return { shouldNotify: false, message: '' };
+  if (topEdge < 0.09) return { shouldNotify: false, message: '' };
+
+  notifyOnFirstEdgeCandidate = false;
+  return {
+    shouldNotify: true,
+    message: [
+      'EDGE CANDIDATE FOUND',
+      '',
+      `"${question.substring(0, 80)}"`,
+      `Net edge: ${(topEdge * 100).toFixed(1)}c (threshold: 9c, after fees)`,
+      '',
+      'This market would qualify for a live trade.',
+      'Send /predict golive to review pre-flight checks.',
+    ].join('\n'),
+  };
 }

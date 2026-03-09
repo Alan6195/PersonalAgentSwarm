@@ -49,11 +49,25 @@ export function lmsrShareCost(quantities: number[], b: number, outcomeIndex: num
 // ── Bayesian Updates ─────────────────────────────────────────────────
 
 /**
- * Bayesian posterior update: P(H|E) = P(E|H) * P(H) / P(E)
+ * Bayesian posterior update using log-odds form (numerically stable).
+ *
+ * posteriorOdds = priorOdds * (likelihoodUp / likelihoodDown)
+ * posterior = posteriorOdds / (1 + posteriorOdds)
+ *
+ * Output clamped to [0.01, 0.99] to avoid log(0) in downstream math.
+ *
+ * @param prior Prior probability P(Up)
+ * @param likelihoodUp P(Evidence | Up)
+ * @param likelihoodDown P(Evidence | Down). If omitted, defaults to (1 - likelihoodUp).
  */
-export function bayesUpdate(prior: number, likelihood: number, marginal: number): number {
-  if (marginal === 0) return prior;
-  return (likelihood * prior) / marginal;
+export function bayesUpdate(prior: number, likelihoodUp: number, likelihoodDown?: number): number {
+  prior = Math.max(0.01, Math.min(0.99, prior));
+  const lDown = likelihoodDown ?? (1 - likelihoodUp);
+  if (lDown <= 0) return 0.99;
+  const priorOdds = prior / (1 - prior);
+  const lr = likelihoodUp / lDown;
+  const postOdds = priorOdds * lr;
+  return Math.max(0.01, Math.min(0.99, postOdds / (1 + postOdds)));
 }
 
 /**

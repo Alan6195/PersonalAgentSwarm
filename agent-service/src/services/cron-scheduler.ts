@@ -42,6 +42,21 @@ interface CronJob {
 let schedulerInterval: NodeJS.Timeout | null = null;
 let telegramNotify: ((text: string) => Promise<void>) | null = null;
 
+// Notification throttle: same key can't fire more than once per 10 minutes
+const notificationThrottle = new Map<string, number>();
+const THROTTLE_MS = 10 * 60 * 1000;
+
+async function sendThrottledTelegram(key: string, message: string): Promise<void> {
+  if (!telegramNotify) return;
+  const last = notificationThrottle.get(key) ?? 0;
+  if (Date.now() - last < THROTTLE_MS) {
+    console.log(`[Cron] Throttled notification: ${key}`);
+    return;
+  }
+  notificationThrottle.set(key, Date.now());
+  await telegramNotify(message);
+}
+
 /**
  * Set the Telegram notification callback (called from index.ts)
  */
@@ -427,8 +442,9 @@ async function runJob(job: CronJob): Promise<void> {
 
       await activityLogger.log({ event_type: 'cron_completed', agent_id: job.agent_id, task_id: task.id, channel: 'cron', summary: `Predict Scan: ${scanSummary.substring(0, 200)}` });
 
-      if (telegramNotify) {
-        try { await telegramNotify(`*Predict Scan*\n\n${scanSummary}`); } catch { /* non-critical */ }
+      // Only notify if trades were opened (not just scan results)
+      if (scanSummary.includes('opened') && !scanSummary.includes('opened 0')) {
+        try { await sendThrottledTelegram('manifold-scan-trade', `*Predict Scan*\n\n${scanSummary}`); } catch { /* non-critical */ }
       }
 
       console.log(`[Cron] Predict Manifold Scan completed (${durationMs}ms): ${scanSummary}`);
@@ -479,8 +495,9 @@ async function runJob(job: CronJob): Promise<void> {
       await query(`UPDATE cron_jobs SET last_status = 'success', last_run_at = NOW(), next_run_at = $1, last_duration_ms = $2, run_count = run_count + 1, updated_at = NOW() WHERE id = $3`, [nextRun, durationMs, job.id]);
       await taskManager.completeTask(task.id, { content: resSummary, tokensUsed: 0, costCents: 0, durationMs });
 
-      if (telegramNotify && resSummary.includes('resolved')) {
-        try { await telegramNotify(`*Predict Resolution*\n\n${resSummary}`); } catch { /* non-critical */ }
+      // Only notify on positive resolution (P&L: +X.XX)
+      if (resSummary.includes('resolved') && resSummary.includes('P&L: +')) {
+        try { await sendThrottledTelegram('predict-resolution', `\u{1F4B0} *Predict Win*\n\n${resSummary}`); } catch { /* non-critical */ }
       }
 
       console.log(`[Cron] Predict Resolution Check completed (${durationMs}ms): ${resSummary}`);
@@ -521,11 +538,51 @@ async function runJob(job: CronJob): Promise<void> {
       await query(`UPDATE cron_jobs SET last_status = 'success', last_run_at = NOW(), next_run_at = $1, last_duration_ms = $2, run_count = run_count + 1, updated_at = NOW() WHERE id = $3`, [nextRun, durationMs, job.id]);
       await taskManager.completeTask(task.id, { content: polySummary, tokensUsed: 0, costCents: 0, durationMs });
 
-      if (telegramNotify && !polySummary.includes('No Polymarket candidates')) {
-        try { await telegramNotify(`*Polymarket Scan*\n\n${polySummary}`); } catch { /* non-critical */ }
+      // Scan notifications silenced; only resolution outcomes notify via Telegram.
+      // Edge candidate notification from /predict golive wait (kept for manual golive sessions)
+      if (polySummary.includes('__EDGE_NOTIFY__') && telegramNotify) {
+        const edgeMsg = polySummary.split('__EDGE_NOTIFY__')[1];
+        try { await telegramNotify(edgeMsg); } catch { /* non-critical */ }
       }
 
-      console.log(`[Cron] Predict Polymarket Scan completed (${durationMs}ms): ${polySummary}`);
+      console.log(`[Cron] Predict Polymarket Scan completed (${durationMs}ms): ${polySummary.split('__EDGE_NOTIFY__')[0]}`);
+      return;
+    }
+
+    // Predict Daily Summary: aggregate stats, send to Telegram
+    if (job.name === 'Predict Daily Summary') {
+      console.log('[Cron] Running Predict Daily Summary');
+      const { handleDailySummary } = await import('./predict/cron');
+      const summary = await handleDailySummary();
+      const durationMs = Date.now() - startTime;
+
+      await query(`UPDATE cron_runs SET status = 'success', duration_ms = $1, output_summary = $2, completed_at = NOW() WHERE id = $3`, [durationMs, summary, run.id]);
+      const nextRun = calculateNextRun(job.schedule);
+      await query(`UPDATE cron_jobs SET last_status = 'success', last_run_at = NOW(), next_run_at = $1, last_duration_ms = $2, run_count = run_count + 1, updated_at = NOW() WHERE id = $3`, [nextRun, durationMs, job.id]);
+      await taskManager.completeTask(task.id, { content: summary, tokensUsed: 0, costCents: 0, durationMs });
+
+      if (telegramNotify) {
+        try { await telegramNotify(`\u{1F4C8} ${summary}`); } catch { /* non-critical */ }
+      }
+
+      console.log(`[Cron] Predict Daily Summary completed (${durationMs}ms)`);
+      return;
+    }
+
+    // X Agent Intel Scan: run intelligence scan + write shared_signals for predict
+    if (job.name === 'X Agent Intel Scan') {
+      console.log('[Cron] Running X Agent Intel Scan');
+      const { runIntelligenceScan } = await import('./x-intelligence');
+      const report = await runIntelligenceScan();
+      const durationMs = Date.now() - startTime;
+      const summary = `Intel scan: ${report.totalTweetsScanned} tweets scanned, ${report.insights.length} insights, ${report.trendingSummary.length} trends. Shared signals written.`;
+
+      await query(`UPDATE cron_runs SET status = 'success', duration_ms = $1, output_summary = $2, completed_at = NOW() WHERE id = $3`, [durationMs, summary, run.id]);
+      const nextRun = calculateNextRun(job.schedule);
+      await query(`UPDATE cron_jobs SET last_status = 'success', last_run_at = NOW(), next_run_at = $1, last_duration_ms = $2, run_count = run_count + 1, updated_at = NOW() WHERE id = $3`, [nextRun, durationMs, job.id]);
+      await taskManager.completeTask(task.id, { content: summary, tokensUsed: 0, costCents: 0, durationMs });
+
+      console.log(`[Cron] X Agent Intel Scan completed (${durationMs}ms): ${summary}`);
       return;
     }
 

@@ -144,17 +144,44 @@ assertBool('lmsrShareCost positive for buying', shareCost > 0, true);
 
 console.log('\n── Bayesian ──');
 
-// Uniform prior with strong likelihood
-const posterior = bayesUpdate(0.5, 0.9, 0.5);
+// Uniform prior with strong likelihood (log-odds form)
+// prior=0.50, likelihoodUp=0.90, likelihoodDown=0.10
+// priorOdds = 1.0, lr = 9.0, postOdds = 9.0, posterior = 9/10 = 0.90
+const posterior = bayesUpdate(0.5, 0.9);
 assert('bayesUpdate strong likelihood', posterior, 0.9);
 
-// Identity update: likelihood equals marginal
-const identity = bayesUpdate(0.6, 0.5, 0.5);
-assert('bayesUpdate identity (lik == marginal)', identity, 0.6);
+// Identity update: likelihoodUp == 0.50 (no signal)
+// lr = 0.50/0.50 = 1.0, posterior = prior
+const identity = bayesUpdate(0.6, 0.5);
+assert('bayesUpdate identity (no signal)', identity, 0.6);
 
-// Zero marginal returns prior (edge case)
-const zeroMarginal = bayesUpdate(0.7, 0.5, 0);
-assert('bayesUpdate zero marginal returns prior', zeroMarginal, 0.7);
+// Explicit likelihoodDown parameter
+// prior=0.50, likelihoodUp=0.65, likelihoodDown=0.35
+// lr = 0.65/0.35 = 1.857, postOdds = 1.857, posterior = 0.6500
+const explicitDown = bayesUpdate(0.50, 0.65, 0.35);
+assert('bayesUpdate explicit likelihoodDown', explicitDown, 0.65);
+
+// Output stays in [0.01, 0.99] even with extreme inputs
+const clampHigh = bayesUpdate(0.99, 0.999);
+assertBool('bayesUpdate clamped high <= 0.99', clampHigh <= 0.99, true);
+assertBool('bayesUpdate clamped high > 0', clampHigh > 0, true);
+
+const clampLow = bayesUpdate(0.01, 0.001);
+assertBool('bayesUpdate clamped low >= 0.01', clampLow >= 0.01, true);
+
+// CRITICAL TEST: chain two strong signals, output stays in [0, 1]
+// Simulates: momentum=strong_up (0.65), then intel=bullish (0.62)
+// Old formula: bayesUpdate(0.55, 0.65, 0.50) = 0.715 (wrong, > 0.65 likelihood)
+// Log-odds form: both signals should shift prior upward but stay bounded
+const chainStep1 = bayesUpdate(0.50, 0.65);  // momentum signal
+const chainStep2 = bayesUpdate(chainStep1, 0.62);  // intel signal on top
+assertBool('chained signals: step1 in [0,1]', chainStep1 >= 0.01 && chainStep1 <= 0.99, true);
+assertBool('chained signals: step2 in [0,1]', chainStep2 >= 0.01 && chainStep2 <= 0.99, true);
+assertBool('chained signals: step2 > step1 (both bullish)', chainStep2 > chainStep1, true);
+assertBool('chained signals: step2 < 0.85 (not extreme)', chainStep2 < 0.85, true);
+// Verify exact: step1 = 0.65, step2 odds = (0.65/0.35)*(0.62/0.38) = 1.857*1.632 = 3.031
+// step2 = 3.031/4.031 = 0.7520
+assert('chained signals: step2 value', chainStep2, 0.7520, 0.005);
 
 // ── Expected Return Tests ────────────────────────────────────────────
 

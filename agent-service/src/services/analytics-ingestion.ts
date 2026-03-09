@@ -26,6 +26,8 @@ export interface RecordPostParams {
   mediaType?: string;
   taskId?: number;
   cronJobName?: string;
+  visualStrategy?: string;
+  intelTrigger?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +118,7 @@ const SNAPSHOT_INTERVALS = [
 // ---------------------------------------------------------------------------
 
 export async function recordPost(params: RecordPostParams): Promise<number> {
-  const { tweetId, threadId, content, contentType, hasMedia, mediaType, taskId, cronJobName } = params;
+  const { tweetId, threadId, content, contentType, hasMedia, mediaType, taskId, cronJobName, visualStrategy, intelTrigger } = params;
 
   // Classify content
   const bucket = classifyBucket(content);
@@ -129,8 +131,9 @@ export async function recordPost(params: RecordPostParams): Promise<number> {
     `INSERT INTO post_analytics (
       tweet_id, thread_id, content, content_type, content_bucket,
       hook_pattern, topic, has_media, media_type, has_link, has_cta,
-      char_count, posted_hour, posted_day, task_id, cron_job_name
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      char_count, posted_hour, posted_day, task_id, cron_job_name,
+      visual_strategy, intel_trigger
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
     ON CONFLICT (tweet_id) DO NOTHING
     RETURNING id`,
     [
@@ -138,6 +141,7 @@ export async function recordPost(params: RecordPostParams): Promise<number> {
       hook, topic, hasMedia || false, mediaType || null,
       detectLink(content), detectCta(content),
       content.length, hour, day, taskId || null, cronJobName || null,
+      visualStrategy || null, intelTrigger || null,
     ]
   );
 
@@ -279,7 +283,7 @@ export async function processDueSnapshots(): Promise<{ processed: number; failed
 // recomputeContentPerformance: called by daily cron job
 // ---------------------------------------------------------------------------
 
-const DIMENSIONS = ['content_type', 'content_bucket', 'hook_pattern', 'topic', 'posted_hour', 'posted_day'];
+const DIMENSIONS = ['content_type', 'content_bucket', 'hook_pattern', 'topic', 'posted_hour', 'posted_day', 'visual_strategy'];
 const PERIODS = [
   { label: '7d', days: 7 },
   { label: '30d', days: 30 },

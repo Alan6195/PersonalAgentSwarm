@@ -77,8 +77,16 @@ async function getDashboard() {
   const manifold = await getPlatformStats('manifold');
   const polymarket = await getPlatformStats('polymarket');
 
-  // Polymarket dry run flag
-  const polyDryRun = process.env.PREDICT_POLY_DRY_RUN === 'true';
+  // Polymarket dry run flag: check agent_config table override, fall back to env
+  let polyDryRun = process.env.PREDICT_POLY_DRY_RUN !== 'false'; // default true
+  try {
+    const configRow = await query(
+      `SELECT value FROM agent_config WHERE key = 'PREDICT_POLY_DRY_RUN'`
+    );
+    if (configRow.length > 0) {
+      polyDryRun = (configRow[0] as any).value !== 'false';
+    }
+  } catch { /* agent_config table may not exist yet */ }
 
   // Risk state (latest daily risk for polymarket)
   const riskRows = await query(
@@ -279,6 +287,54 @@ async function getDashboard() {
     })),
   };
 
+  // Price feed data (from price_signals table, populated by agent-service)
+  const priceRows = await query(
+    `SELECT asset, current_price, return_1m, return_5m, return_15m,
+            volatility_5m, momentum, momentum_strength, updated_at
+     FROM price_signals ORDER BY asset`
+  );
+  const priceFeed: Record<string, any> = {};
+  let priceFeedConnected = false;
+  for (const row of priceRows) {
+    const r = row as any;
+    const updatedAt = new Date(r.updated_at);
+    const ageSeconds = (Date.now() - updatedAt.getTime()) / 1000;
+    if (ageSeconds < 120) priceFeedConnected = true; // consider connected if updated within 2 min
+    priceFeed[r.asset] = {
+      price: parseFloat(r.current_price) || 0,
+      return5m: parseFloat(r.return_5m) || 0,
+      momentum: r.momentum || 'neutral',
+      momentumStrength: parseFloat(r.momentum_strength) || 0,
+      updatedAt: r.updated_at,
+    };
+  }
+
+  // Intel signals summary (from shared_signals table)
+  const intelRows = await query(
+    `SELECT
+       COALESCE(SUBSTRING(topic FROM '[A-Z]{2,5}'), topic) as asset_key,
+       direction, strength,
+       EXTRACT(EPOCH FROM (NOW() - created_at)) / 60 as age_minutes,
+       created_at
+     FROM shared_signals
+     WHERE created_at > NOW() - INTERVAL '4 hours'
+     ORDER BY created_at DESC
+     LIMIT 20`
+  );
+  const intelSignals: Record<string, any> = {};
+  for (const row of intelRows) {
+    const r = row as any;
+    const assetKey = (r.asset_key || '').toUpperCase();
+    if (!assetKey || intelSignals[assetKey]) continue; // take freshest per asset
+    intelSignals[assetKey] = {
+      direction: r.direction,
+      strength: parseFloat(r.strength) || 0,
+      ageMinutes: Math.round(parseFloat(r.age_minutes) || 0),
+    };
+  }
+
+  const lastIntelScan = intelRows.length > 0 ? (intelRows[0] as any).created_at : null;
+
   return NextResponse.json({
     manifold: {
       bankroll: manifold.bankroll,
@@ -317,6 +373,12 @@ async function getDashboard() {
       maxDrawdown,
       winStreak,
     },
+    priceFeed: {
+      connected: priceFeedConnected,
+      assets: priceFeed,
+    },
+    intelSignals,
+    lastIntelScan,
   });
 }
 

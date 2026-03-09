@@ -9,10 +9,11 @@ import { scanManifold, analyzeMarkets, validateModelAccess } from './scan';
 import { executeTrade, reconcilePositions, getCurrentBankroll, getManifoldBalance } from './execute';
 import { scanPolymarket } from './scan-polymarket';
 import { executePolymarketTrade, getUSDCBalance } from './execute-polymarket';
+import { checkEdgeCandidateNotification } from './telegram';
 import { resetDailyRisk } from './risk-gate';
 import { runWeeklyReview } from './learn';
 import { query, queryOne } from '../../db';
-import { config } from '../../config';
+import { config, isPolyDryRun } from '../../config';
 
 let modelsValidated = false;
 
@@ -177,7 +178,7 @@ export async function handlePolymarketScan(taskId: number): Promise<string> {
   let dryRunCount = 0;
 
   for (const market of candidates) {
-    if (market.edge < 0.04) continue;
+    if (market.netEdge < 0.09) continue; // 9c net edge threshold (after taker fees)
     if (market.betAmount < 0.50) continue;
 
     const result = await executePolymarketTrade(market, bankroll);
@@ -194,8 +195,97 @@ export async function handlePolymarketScan(taskId: number): Promise<string> {
     }
   }
 
-  const mode = config.PREDICT_POLY_DRY_RUN ? 'DRY RUN' : 'LIVE';
-  return `[${mode}] Polymarket: ${candidates.length} markets, ${tradesOpened} trades, ${dryRunCount} dry-run, ${tradesBlocked} blocked. Bankroll: $${bankroll.toFixed(2)}`;
+  const mode = isPolyDryRun() ? 'DRY RUN' : 'LIVE';
+  let result = `[${mode}] Polymarket: ${candidates.length} markets, ${tradesOpened} trades, ${dryRunCount} dry-run, ${tradesBlocked} blocked. Bankroll: $${bankroll.toFixed(2)}`;
+
+  // Check if /predict golive wait is active and we found a qualifying candidate (net edge >= 9c)
+  const topCandidate = candidates.find(c => c.netEdge >= 0.09);
+  if (topCandidate) {
+    const notification = checkEdgeCandidateNotification(
+      topCandidate.netEdge,
+      topCandidate.question,
+    );
+    if (notification.shouldNotify) {
+      result += `\n__EDGE_NOTIFY__${notification.message}`;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Daily summary: aggregate stats from the day, send to Telegram
+ * Schedule: 9am MT (15:00 UTC)
+ */
+export async function handleDailySummary(): Promise<string> {
+  // Polymarket scan count today
+  const scanStats = await queryOne<any>(
+    `SELECT COUNT(*) as total FROM cron_runs cr
+     JOIN cron_jobs cj ON cr.cron_job_id = cj.id
+     WHERE cj.name = 'Predict Polymarket Scan'
+       AND cr.started_at >= CURRENT_DATE
+       AND cr.status = 'success'`
+  );
+
+  // Dry-run and live trade counts today
+  const tradeStats = await queryOne<any>(
+    `SELECT
+       COUNT(*) FILTER (WHERE status IN ('open', 'closed_win', 'closed_loss', 'dry_run')) as total,
+       COUNT(*) FILTER (WHERE status = 'dry_run') as dry_runs,
+       COUNT(*) FILTER (WHERE status IN ('open', 'closed_win', 'closed_loss')) as live
+     FROM market_positions
+     WHERE platform = 'polymarket'
+       AND created_at >= CURRENT_DATE`
+  );
+
+  // Manifold trade counts today
+  const manifoldStats = await queryOne<any>(
+    `SELECT COUNT(*) as total FROM market_positions
+     WHERE platform = 'manifold' AND created_at >= CURRENT_DATE`
+  );
+
+  // Phase gate progress
+  const gateStats = await queryOne<any>(
+    `SELECT
+       COUNT(*) FILTER (WHERE status IN ('closed_win', 'closed_loss')) as trades,
+       COUNT(*) FILTER (WHERE status = 'closed_win') as wins
+     FROM market_positions
+     WHERE platform = 'polymarket'
+       AND (notes IS NULL OR notes NOT LIKE 'scanner bug%')`
+  );
+
+  // API cost today
+  const costStats = await queryOne<any>(
+    `SELECT COALESCE(SUM(cost_cents), 0) as total_cents FROM cost_events
+     WHERE created_at >= CURRENT_DATE`
+  );
+
+  const scanCount = parseInt(scanStats?.total || '0');
+  const dryRunCandidates = parseInt(tradeStats?.dry_runs || '0');
+  const liveTradesExecuted = parseInt(tradeStats?.live || '0');
+  const manifoldTrades = parseInt(manifoldStats?.total || '0');
+  const gateTrades = parseInt(gateStats?.trades || '0');
+  const gateWins = parseInt(gateStats?.wins || '0');
+  const winRate = gateTrades > 0 ? (gateWins / gateTrades * 100).toFixed(1) : '0.0';
+  const costUsd = (parseInt(costStats?.total_cents || '0') / 100).toFixed(3);
+
+  const today = new Date().toLocaleDateString('en-US', {
+    month: 'long', day: 'numeric', timeZone: 'America/Denver',
+  });
+
+  const summary = [
+    `PREDICT DAILY SUMMARY \u2014 ${today}`,
+    '\u2501'.repeat(24),
+    `Polymarket scans:    ${scanCount}`,
+    `Dry-run candidates:  ${dryRunCandidates}`,
+    `Trades executed:     ${liveTradesExecuted}`,
+    `Manifold trades:     ${manifoldTrades}`,
+    '',
+    `Phase gate:    ${gateTrades}/15 trades  ${winRate}% WR`,
+    `API cost today: $${costUsd}`,
+  ].join('\n');
+
+  return summary;
 }
 
 async function getPolyBankroll(): Promise<number> {

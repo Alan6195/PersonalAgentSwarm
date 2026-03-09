@@ -31,6 +31,8 @@ export const config = {
   // Predict Agent (prediction market trading)
   MANIFOLD_API_KEY: process.env.MANIFOLD_API_KEY || '',
   POLYMARKET_API_KEY: process.env.POLYMARKET_API_KEY || '',
+  POLYMARKET_API_SECRET: process.env.POLYMARKET_API_SECRET || '',
+  POLYMARKET_API_PASSPHRASE: process.env.POLYMARKET_API_PASSPHRASE || '',
   POLYMARKET_WALLET_KEY: process.env.POLYMARKET_WALLET_KEY || '',
   POLYMARKET_WALLET_ADDRESS: process.env.POLYMARKET_WALLET_ADDRESS || '',
   POLYGON_RPC_URL: process.env.POLYGON_RPC_URL || '',
@@ -52,7 +54,7 @@ export const config = {
   PREDICT_POLY_DRY_RUN: (process.env.PREDICT_POLY_DRY_RUN || 'true') === 'true',
   PREDICT_POLY_STARTING_BANKROLL: parseFloat(process.env.PREDICT_POLY_STARTING_BANKROLL || '50'),
   PREDICT_POLY_KELLY_FRACTION: parseFloat(process.env.PREDICT_POLY_KELLY_FRACTION || '0.15'),
-  PREDICT_POLY_LMSR_B: parseFloat(process.env.PREDICT_POLY_LMSR_B || '100000'),
+  PREDICT_POLY_LMSR_B: parseFloat(process.env.PREDICT_POLY_LMSR_B || '3000'),
 
   // Unsplash (stock photos for authentic visual content)
   UNSPLASH_ACCESS_KEY: process.env.UNSPLASH_ACCESS_KEY || '',
@@ -184,13 +186,73 @@ export function validateConfig(): void {
 
   if (config.POLYMARKET_API_KEY) {
     const hasWallet = !!(config.POLYMARKET_WALLET_KEY);
-    console.log(`[Config] Polymarket API key found; scanner enabled. DRY_RUN=${config.PREDICT_POLY_DRY_RUN}, bankroll=$${config.PREDICT_POLY_STARTING_BANKROLL}, kelly=${config.PREDICT_POLY_KELLY_FRACTION}, wallet=${hasWallet ? 'configured' : 'not set (dry-run only)'}`);
+    const hasL2 = !!(config.POLYMARKET_API_SECRET && config.POLYMARKET_API_PASSPHRASE);
+    console.log(`[Config] Polymarket API key found; scanner enabled. DRY_RUN=${config.PREDICT_POLY_DRY_RUN}, bankroll=$${config.PREDICT_POLY_STARTING_BANKROLL}, kelly=${config.PREDICT_POLY_KELLY_FRACTION}, wallet=${hasWallet ? 'configured' : 'not set (dry-run only)'}, L2_auth=${hasL2 ? 'ready' : 'missing secret/passphrase'}`);
   } else {
     console.log('[Config] POLYMARKET_API_KEY not set; Polymarket scanner disabled.');
   }
 
   console.log(`[Config] Cost guardrails: daily=$${(config.DAILY_BUDGET_LIMIT_CENTS / 100).toFixed(2)}, per-agent=$${(config.AGENT_DAILY_LIMIT_CENTS / 100).toFixed(2)}`);
   console.log('[Config] All environment variables validated.');
+}
+
+// ── Runtime config overrides (from agent_config table) ──────────────────
+
+/** Mutable overrides loaded from DB. Takes precedence over env vars. */
+const runtimeOverrides: Record<string, string> = {};
+
+/**
+ * Load config overrides from agent_config table on startup.
+ * Must be called after DB pool is initialized.
+ */
+export async function loadConfigOverrides(): Promise<void> {
+  try {
+    // Dynamic import to avoid circular dependency (db.ts imports config.ts)
+    const { query } = await import('./db');
+    const rows = await query<{ key: string; value: string }>(
+      `SELECT key, value FROM agent_config`
+    );
+    for (const row of rows) {
+      runtimeOverrides[row.key] = row.value;
+      console.log(`[Config] DB override: ${row.key}=${row.value}`);
+    }
+  } catch {
+    // Table may not exist yet (pre-migration); silently continue
+  }
+}
+
+/**
+ * Set a runtime config override and persist to DB.
+ */
+export async function setConfigOverride(key: string, value: string): Promise<void> {
+  runtimeOverrides[key] = value;
+  const { query } = await import('./db');
+  await query(
+    `INSERT INTO agent_config (key, value, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+    [key, value]
+  );
+}
+
+/**
+ * Remove a runtime config override.
+ */
+export async function removeConfigOverride(key: string): Promise<void> {
+  delete runtimeOverrides[key];
+  const { query } = await import('./db');
+  await query(`DELETE FROM agent_config WHERE key = $1`, [key]);
+}
+
+/**
+ * Check if Polymarket dry run is active.
+ * DB override takes precedence over env var.
+ */
+export function isPolyDryRun(): boolean {
+  if ('PREDICT_POLY_DRY_RUN' in runtimeOverrides) {
+    return runtimeOverrides['PREDICT_POLY_DRY_RUN'] !== 'false';
+  }
+  return config.PREDICT_POLY_DRY_RUN;
 }
 
 export function getModelCategory(model: string): 'opus' | 'sonnet' | 'haiku' {

@@ -20,6 +20,8 @@
 import { config } from '../../config';
 import { query } from '../../db';
 import { lmsrProb, bayesUpdate, fractionalKelly, rewardScore } from './model';
+import { priceFeed, AssetSignal } from './price-feed';
+import { getIntelSummary, IntelSummary } from './intel-signal';
 
 const GAMMA_BASE = 'https://gamma-api.polymarket.com';
 const CLOB_BASE = 'https://clob.polymarket.com';
@@ -38,8 +40,11 @@ const DURATIONS = [
   { slug: '15m', minutes: 15 },
 ];
 
-// Min edge raised from 4c to 6c for Polymarket to account for taker fees
-const POLY_MIN_EDGE = 0.06;
+// Polymarket taker fee for 15-min crypto markets (up to 3% at 50% prob; use 2.5% avg)
+const POLY_TAKER_FEE_PCT = 0.025;
+
+// Min NET edge after fee subtraction (raised from 6c gross to 9c net per audit)
+const POLY_MIN_NET_EDGE = 0.09;
 
 // How many upcoming windows to check per asset per duration
 const WINDOWS_TO_CHECK = 4;
@@ -109,6 +114,26 @@ export interface PolyCandidate {
   reasoning: string;
   yesTokenId: string;
   noTokenId: string;
+  // Order book data
+  yesDepth: number;
+  noDepth: number;
+  totalLiquidity: number;
+  volume24h: number;
+  // Signal tracking
+  pAfterMomentum: number;
+  priceMomentum: string | null;
+  priceReturn5m: number | null;
+  intelSentiment: number | null;
+  intelSignalCount: number | null;
+  // Fee-adjusted edge
+  grossEdge: number;
+  netEdge: number;
+  takerFeePct: number;
+  // Market metadata for trade execution
+  conditionId: string;
+  negRisk: boolean;
+  tickSize: string;
+  minOrderSize: number;
 }
 
 /**
@@ -254,28 +279,50 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
         ? lmsrProb([yesDepth, noDepth], 0, config.PREDICT_POLY_LMSR_B)
         : pMarket; // fallback to market price if no depth data
 
-      // Bayesian update with intel signal
-      const intel = intelSignals.find(s =>
-        s.topic.toLowerCase().includes(asset.toLowerCase())
-      );
+      // Signal 1: Price momentum from Coinbase/Binance feed
+      let pAfterMomentum = pLmsr;
+      const priceSignal = priceFeed.getSignal(asset);
 
-      let pBayes = pLmsr;
+      if (priceSignal && priceSignal.lastUpdated > Date.now() - 60_000) {
+        const momentumLikelihood = computeMomentumLikelihood(priceSignal, minutes);
+        pAfterMomentum = bayesUpdate(pLmsr, momentumLikelihood.up);
+      }
+
+      // Signal 2: Intel sentiment from X agent shared_signals (decayed + aggregated)
+      const intelSummary = await getIntelSummary(asset);
+
+      let pBayes = pAfterMomentum;
       let intelAligned = false;
       let intelSignalId: number | null = null;
 
-      if (intel) {
-        const likelihood = intel.direction === 'accelerating' ? 0.65 : 0.35;
-        pBayes = bayesUpdate(pLmsr, likelihood, 0.5);
-        intelAligned = true;
-        intelSignalId = intel.id;
+      if (intelSummary && intelSummary.signalCount > 0 && intelSummary.freshestSignalAge < 240) {
+        const intelLikelihood = computeIntelLikelihood(intelSummary, minutes);
+        pBayes = bayesUpdate(pAfterMomentum, intelLikelihood.up);
+        intelAligned = Math.abs(intelSummary.netSentiment) > 0.1;
       }
 
-      // Compute edge and direction
-      const edge = pBayes - pMarket;
-      const direction = edge > 0 ? 'YES' : 'NO';
-      const absEdge = Math.abs(edge);
+      // Legacy: check old intel signals for signal ID tracking
+      const intel = intelSignals.find(s =>
+        s.topic.toLowerCase().includes(asset.toLowerCase())
+      );
+      if (intel) intelSignalId = intel.id;
 
-      // Kelly sizing with Polymarket-specific fraction (15%)
+      // Compute edge and direction
+      const grossEdge = pBayes - pMarket;
+      const direction = grossEdge > 0 ? 'YES' : 'NO';
+      const absGrossEdge = Math.abs(grossEdge);
+
+      // Subtract taker fee from edge to get net edge
+      // Fee is applied to the contract price, so fee impact = takerFee * contractPrice
+      const contractPrice = direction === 'YES' ? pMarket : (1 - pMarket);
+      const feeImpact = POLY_TAKER_FEE_PCT * contractPrice;
+      const netEdge = Math.max(0, absGrossEdge - feeImpact);
+
+      // Use net edge for all downstream calculations
+      const edge = grossEdge; // preserve sign for direction
+      const absEdge = netEdge; // net edge for threshold + sizing
+
+      // Kelly sizing with Polymarket-specific fraction (15%), using net edge probability
       const decimalOdds = direction === 'YES' ? 1 / pMarket : 1 / (1 - pMarket);
       const kellyFrac = fractionalKelly(pBayes, decimalOdds, config.PREDICT_POLY_KELLY_FRACTION);
       const betAmount = Math.min(
@@ -294,10 +341,15 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
         volume: volume24h,
       });
 
+      const momentumStr = priceSignal
+        ? `momentum=${priceSignal.momentum} (${(priceSignal.return5m * 100).toFixed(2)}% 5m)`
+        : 'no price feed';
       const reasoning = `LMSR p=${pLmsr.toFixed(4)}, market=${pMarket.toFixed(4)}, ` +
+        `${momentumStr}, pMomentum=${pAfterMomentum.toFixed(4)}, ` +
         `${intel ? `intel ${intel.direction} (${asset})` : 'no intel'}, ` +
-        `edge=${(edge * 100).toFixed(1)}c, kelly=${(kellyFrac * 100).toFixed(1)}%, ` +
-        `${minutes}min market`;
+        `gross_edge=${(absGrossEdge * 100).toFixed(1)}c, fee=${(feeImpact * 100).toFixed(1)}c, ` +
+        `net_edge=${(netEdge * 100).toFixed(1)}c, kelly=${(kellyFrac * 100).toFixed(1)}%, ` +
+        `depth=${yesDepth.toFixed(0)}/${noDepth.toFixed(0)}, ${minutes}min market`;
 
       analyzed.push({
         id: m.conditionId,
@@ -321,26 +373,49 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
         reasoning,
         yesTokenId: yesTokenId || '',
         noTokenId: noTokenId || '',
+        yesDepth,
+        noDepth,
+        totalLiquidity,
+        volume24h,
+        pAfterMomentum,
+        priceMomentum: priceSignal?.momentum ?? null,
+        priceReturn5m: priceSignal?.return5m ?? null,
+        intelSentiment: intelSummary?.netSentiment ?? null,
+        intelSignalCount: intelSummary?.signalCount ?? null,
+        grossEdge: absGrossEdge,
+        netEdge,
+        takerFeePct: POLY_TAKER_FEE_PCT,
+        conditionId: m.conditionId,
+        negRisk: false,    // crypto up/down markets are NOT neg risk
+        tickSize: '0.01',  // 1-cent ticks for crypto markets
+        minOrderSize: 5,   // $5 minimum from CLOB API
       });
     }
 
     // Sort by score descending
     analyzed.sort((a, b) => b.score - a.score);
 
-    // Record scans to DB
+    // Record scans to DB (with signal tracking, CLOB depth, and fee-adjusted edge)
     for (const a of analyzed) {
       try {
         await query(
           `INSERT INTO market_scans
            (platform, market_id, market_url, question, category, current_prob, volume_usd, liquidity_usd,
             close_date, num_traders, claude_prob, claude_confidence, claude_reasoning, edge, abs_edge,
-            kelly_fraction, expected_return, reward_score, intel_aligned)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+            kelly_fraction, expected_return, reward_score, intel_aligned,
+            price_momentum, price_return_5m, intel_sentiment, intel_signal_count, p_after_momentum, p_final,
+            p_lmsr, yes_quantity, no_quantity, gross_edge, net_edge)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)`,
           [
-            a.platform, a.id, a.url, a.question, a.category, a.pYes, 0, 0,
+            a.platform, a.id, a.url, a.question, a.category, a.pYes,
+            a.volume24h, a.totalLiquidity,
             new Date(Date.now() + a.resolutionMinutes * 60000), 0,
-            a.pBayes, 0.5, a.reasoning, a.edge, Math.abs(a.edge),
+            a.pBayes, 0.5, a.reasoning, a.edge, a.netEdge,
             a.kellyFrac, a.expectedRet, a.score, a.intelAligned,
+            a.priceMomentum ?? null, a.priceReturn5m ?? null,
+            a.intelSentiment ?? null, a.intelSignalCount ?? null,
+            a.pAfterMomentum ?? null, a.pBayes,
+            a.pLmsr, a.yesDepth, a.noDepth, a.grossEdge, a.netEdge,
           ]
         );
       } catch (err) {
@@ -408,7 +483,50 @@ async function fetchOrderBook(tokenId: string): Promise<OrderBookSummary | null>
   }
 }
 
-// ── Intel context ───────────────────────────────────────────────────────
+// ── Price momentum likelihood ───────────────────────────────────────────
+
+function computeMomentumLikelihood(
+  signal: AssetSignal,
+  windowMinutes: number
+): { up: number } {
+  // Momentum -> likelihood of Up outcome (calibrated to crypto 5/15-min markets)
+  const strengthMap: Record<AssetSignal['momentum'], number> = {
+    strong_up:   0.62,   // reduced from 0.65 per audit (backtesting suggests 55-60% WR)
+    up:          0.58,
+    neutral:     0.50,
+    down:        0.42,
+    strong_down: 0.38,   // symmetric with strong_up
+  };
+
+  let likelihoodUp = strengthMap[signal.momentum];
+
+  // Dampen for longer windows (increased from 0.6 to 0.75 per audit:
+  // momentum is more predictive over 15m than 5m, 0.6 over-dampened)
+  if (windowMinutes === 15) {
+    likelihoodUp = 0.50 + (likelihoodUp - 0.50) * 0.75;
+  }
+
+  return { up: likelihoodUp };
+}
+
+// ── Intel sentiment likelihood ──────────────────────────────────────────
+
+function computeIntelLikelihood(
+  intel: IntelSummary,
+  windowMinutes: number
+): { up: number } {
+  // Net sentiment: +1.0 = max bullish, -1.0 = max bearish
+  // Map to likelihood of Up outcome (max shift +/- 12%)
+  const rawLikelihood = 0.50 + intel.netSentiment * 0.12;
+
+  // Dampen for short windows: sentiment affects 15-min more than 5-min
+  const dampening = windowMinutes === 5 ? 0.5 : 0.8;
+  const likelihoodUp = 0.50 + (rawLikelihood - 0.50) * dampening;
+
+  return { up: Math.max(0.35, Math.min(0.65, likelihoodUp)) };
+}
+
+// ── Intel context (legacy) ──────────────────────────────────────────────
 
 interface IntelSignal {
   id: number;

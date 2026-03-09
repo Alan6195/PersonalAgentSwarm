@@ -1,20 +1,25 @@
 /**
  * Predict Agent: Polymarket Trade Execution
  *
- * Phase 2: Real USDC on Polymarket CLOB.
- * Handles order placement, fill monitoring with slippage guard,
- * and position tracking.
+ * Uses the official @polymarket/clob-client for EIP-712 order signing,
+ * L2 HMAC authentication, and order submission. The client handles all
+ * cryptographic complexity (domain separators, typed data signing, etc.).
  *
  * Gated by PREDICT_POLY_DRY_RUN=true (default). When dry run,
  * logs everything but does not place orders.
  */
 
-import { config } from '../../config';
+import { ClobClient, Side, OrderType, type TickSize } from '@polymarket/clob-client';
+import { privateKeyToAccount } from 'viem/accounts';
+import { createWalletClient, http } from 'viem';
+import { polygon } from 'viem/chains';
+import { config, isPolyDryRun } from '../../config';
 import { query } from '../../db';
 import { validateTrade, recordTradeOpened, type TradeCandidate } from './risk-gate';
 import type { PolyCandidate } from './scan-polymarket';
 
-const CLOB_BASE = 'https://clob.polymarket.com';
+const CLOB_HOST = 'https://clob.polymarket.com';
+const CHAIN_ID = 137; // Polygon mainnet
 
 export interface PolyTradeResult {
   success: boolean;
@@ -25,10 +30,46 @@ export interface PolyTradeResult {
   dryRun: boolean;
 }
 
-interface FillResult {
-  filled: boolean;
-  slippageExceeded: boolean;
-  fillPrice: number;
+// Lazy-initialized CLOB client singleton
+let _clobClient: ClobClient | null = null;
+
+/**
+ * Initialize or return the cached ClobClient instance.
+ * Uses L2 auth (HMAC with API key/secret/passphrase) plus viem wallet signer.
+ */
+function getClobClient(): ClobClient {
+  if (_clobClient) return _clobClient;
+
+  if (!config.POLYMARKET_WALLET_KEY) {
+    throw new Error('POLYMARKET_WALLET_KEY not configured');
+  }
+  if (!config.POLYMARKET_API_KEY || !config.POLYMARKET_API_SECRET || !config.POLYMARKET_API_PASSPHRASE) {
+    throw new Error('Polymarket L2 credentials (API key, secret, passphrase) not configured');
+  }
+
+  // Create viem wallet client from private key
+  const account = privateKeyToAccount(config.POLYMARKET_WALLET_KEY as `0x${string}`);
+  const walletClient = createWalletClient({
+    account,
+    chain: polygon,
+    transport: http(),
+  });
+
+  // Initialize ClobClient with L2 credentials
+  _clobClient = new ClobClient(
+    CLOB_HOST,
+    CHAIN_ID,
+    walletClient,
+    {
+      key: config.POLYMARKET_API_KEY,
+      secret: config.POLYMARKET_API_SECRET,
+      passphrase: config.POLYMARKET_API_PASSPHRASE,
+    },
+    0, // signatureType: 0 = EOA (browser wallet / Phantom)
+  );
+
+  console.log('[PolyExec] CLOB client initialized with L2 auth');
+  return _clobClient;
 }
 
 /**
@@ -38,7 +79,7 @@ export async function executePolymarketTrade(
   market: PolyCandidate,
   bankroll: number,
 ): Promise<PolyTradeResult> {
-  const isDryRun = config.PREDICT_POLY_DRY_RUN;
+  const isDryRun = isPolyDryRun();
 
   // Risk gate check
   const candidate: TradeCandidate = {
@@ -61,72 +102,66 @@ export async function executePolymarketTrade(
     console.log(`[PolyExec] DRY RUN: Would place ${market.direction} on "${market.question.substring(0, 60)}" for $${riskCheck.betSize.toFixed(2)}`);
     console.log(`[PolyExec] DRY RUN: edge=${(market.edge * 100).toFixed(1)}c, kelly=${(market.kellyFrac * 100).toFixed(1)}%, pBayes=${market.pBayes.toFixed(4)}`);
 
-    // Record as dry run scan (not a real position)
     return { success: true, dryRun: true };
   }
 
-  // Live execution
+  // Live execution via official CLOB client
   return await placePolymarketOrder(market, riskCheck.betSize, bankroll);
 }
 
 /**
- * Place an order on Polymarket CLOB
+ * Place an order on Polymarket CLOB using the official client.
+ * The client handles EIP-712 signing, L2 HMAC auth, tick size validation.
  */
 async function placePolymarketOrder(
   market: PolyCandidate,
   amount: number,
   bankroll: number,
 ): Promise<PolyTradeResult> {
-  if (!config.POLYMARKET_API_KEY || !config.POLYMARKET_WALLET_KEY) {
-    return { success: false, error: 'Polymarket credentials not configured', dryRun: false };
-  }
-
-  const tokenId = market.direction === 'YES' ? market.yesTokenId : market.noTokenId;
-  const limitPrice = market.direction === 'YES' ? market.pYes : (1 - market.pYes);
-
-  console.log(`[PolyExec] Placing order: ${market.direction} on "${market.question.substring(0, 60)}" for $${amount.toFixed(2)} @ ${limitPrice.toFixed(4)}`);
-
   try {
-    // Size in USDC (6 decimals on Polygon)
-    const sizeUsdc = Math.floor(amount * 1_000_000);
+    const client = getClobClient();
 
-    const orderPayload = {
-      tokenID: tokenId,
-      price: limitPrice.toFixed(4),
-      size: sizeUsdc,
-      side: 'BUY',
-      feeRateBps: 0,
-      nonce: Date.now().toString(),
-      expiration: 0, // GTC
-    };
+    const tokenId = market.direction === 'YES' ? market.yesTokenId : market.noTokenId;
+    // Limit price: if buying YES, use market's YES price; if buying NO, use (1 - YES price)
+    const limitPrice = market.direction === 'YES' ? market.pYes : (1 - market.pYes);
+    // Size is number of outcome shares = USDC amount / price per share
+    const size = amount / limitPrice;
 
-    // Sign the order with the Polygon wallet
-    const signedPayload = await signOrder(orderPayload);
+    console.log(`[PolyExec] Placing order: BUY ${market.direction} on "${market.question.substring(0, 60)}"`);
+    console.log(`[PolyExec]   amount=$${amount.toFixed(2)}, price=${limitPrice.toFixed(4)}, size=${size.toFixed(2)} shares`);
+    console.log(`[PolyExec]   tokenId=${tokenId.slice(0, 30)}..., negRisk=${market.negRisk}, tickSize=${market.tickSize}`);
 
-    const res = await fetch(`${CLOB_BASE}/order`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${config.POLYMARKET_API_KEY}`,
-        'Content-Type': 'application/json',
-        'POLY-ADDRESS': config.POLYMARKET_WALLET_ADDRESS,
-        'POLY-SIGNATURE': signedPayload.signature,
-        'POLY-TIMESTAMP': signedPayload.timestamp,
-        'POLY-NONCE': signedPayload.nonce,
+    // Round price to tick size
+    const tickSize = parseFloat(market.tickSize || '0.01');
+    const roundedPrice = Math.round(limitPrice / tickSize) * tickSize;
+
+    // Use the official client to build, sign, and submit the order
+    const resp = await client.createAndPostOrder(
+      {
+        tokenID: tokenId,
+        price: roundedPrice,
+        size: Math.max(size, market.minOrderSize || 5), // respect min order size
+        side: Side.BUY,
       },
-      body: JSON.stringify(orderPayload),
-    });
+      {
+        tickSize: (market.tickSize || '0.01') as TickSize,
+        negRisk: market.negRisk ?? false,
+      },
+      OrderType.GTC,
+    );
 
-    if (!res.ok) {
-      const errText = await res.text();
-      console.error(`[PolyExec] Order failed: ${res.status} ${errText}`);
-      return { success: false, error: `CLOB API ${res.status}: ${errText.substring(0, 200)}`, dryRun: false };
+    // The client returns the order response
+    const orderId = (resp as any)?.orderID || (resp as any)?.id || 'unknown';
+
+    if (!orderId || orderId === 'unknown') {
+      console.error('[PolyExec] No order ID in response:', JSON.stringify(resp).substring(0, 500));
+      return { success: false, error: 'No order ID returned from CLOB API', dryRun: false };
     }
 
-    const order = await res.json() as any;
-    const orderId = order.orderID || order.id;
+    console.log(`[PolyExec] Order submitted: ${orderId}`);
 
     // Monitor fill with slippage guard
-    const fill = await monitorFill(orderId, limitPrice);
+    const fill = await monitorFill(client, orderId, roundedPrice);
 
     if (!fill.filled) {
       console.log(`[PolyExec] Order not filled (timeout or cancelled): ${orderId}`);
@@ -134,7 +169,7 @@ async function placePolymarketOrder(
     }
 
     if (fill.slippageExceeded) {
-      console.warn(`[PolyExec] Slippage exceeded on fill: ${orderId}, price=${fill.fillPrice.toFixed(4)} vs expected=${limitPrice.toFixed(4)}`);
+      console.warn(`[PolyExec] Slippage exceeded: fill=${fill.fillPrice.toFixed(4)} vs expected=${roundedPrice.toFixed(4)}`);
     }
 
     // Record position in DB
@@ -182,24 +217,29 @@ async function placePolymarketOrder(
 
 /**
  * Monitor order fill with slippage guard.
- * Polls up to 30 seconds. Cancels if not filled.
+ * Polls up to 30 seconds via the CLOB client. Cancels if not filled.
  */
-async function monitorFill(orderId: string, expectedPrice: number): Promise<FillResult> {
+async function monitorFill(
+  client: ClobClient,
+  orderId: string,
+  expectedPrice: number,
+): Promise<{ filled: boolean; slippageExceeded: boolean; fillPrice: number }> {
   for (let i = 0; i < 6; i++) {
     await sleep(5000);
 
     try {
-      const res = await fetch(`${CLOB_BASE}/order/${orderId}`, {
-        headers: { 'Authorization': `Bearer ${config.POLYMARKET_API_KEY}` },
-      });
+      const order = await client.getOrder(orderId);
+      const status = (order as any)?.status;
 
-      if (!res.ok) continue;
-
-      const status = await res.json() as any;
-
-      if (status.status === 'MATCHED' || status.status === 'FILLED') {
-        const avgPrice = parseFloat(status.associate_trades?.[0]?.price || status.price || '0');
-        const slippage = expectedPrice > 0 ? Math.abs(avgPrice - expectedPrice) / expectedPrice : 0;
+      if (status === 'MATCHED' || status === 'FILLED') {
+        const avgPrice = parseFloat(
+          (order as any)?.associate_trades?.[0]?.price ||
+          (order as any)?.price ||
+          '0'
+        );
+        const slippage = expectedPrice > 0
+          ? Math.abs(avgPrice - expectedPrice) / expectedPrice
+          : 0;
 
         if (slippage > 0.02) {
           console.error(`[PolyExec] Slippage ${(slippage * 100).toFixed(1)}% exceeds 2% limit`);
@@ -208,7 +248,7 @@ async function monitorFill(orderId: string, expectedPrice: number): Promise<Fill
         return { filled: true, slippageExceeded: false, fillPrice: avgPrice };
       }
 
-      if (status.status === 'CANCELLED' || status.status === 'EXPIRED') {
+      if (status === 'CANCELLED' || status === 'EXPIRED') {
         return { filled: false, slippageExceeded: false, fillPrice: 0 };
       }
     } catch {
@@ -218,10 +258,8 @@ async function monitorFill(orderId: string, expectedPrice: number): Promise<Fill
 
   // Timeout: cancel the order
   try {
-    await fetch(`${CLOB_BASE}/order/${orderId}`, {
-      method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${config.POLYMARKET_API_KEY}` },
-    });
+    await client.cancelOrder({ orderID: orderId });
+    console.log(`[PolyExec] Order cancelled after timeout: ${orderId}`);
   } catch {
     // Best effort cancellation
   }
@@ -230,39 +268,12 @@ async function monitorFill(orderId: string, expectedPrice: number): Promise<Fill
 }
 
 /**
- * Sign a Polymarket order with the Polygon wallet.
- * Uses EIP-712 typed data signing.
- *
- * TODO: Implement proper EIP-712 signing with ethers.js when wallet is set up.
- * For now, returns a placeholder that allows the API structure to compile.
- */
-async function signOrder(order: any): Promise<{ signature: string; timestamp: string; nonce: string }> {
-  const timestamp = Math.floor(Date.now() / 1000).toString();
-  const nonce = order.nonce || Date.now().toString();
-
-  // Placeholder: real implementation needs ethers.js + wallet private key
-  // import { Wallet } from 'ethers';
-  // const wallet = new Wallet(config.POLYMARKET_WALLET_KEY);
-  // const signature = await wallet.signTypedData(domain, types, order);
-
-  if (!config.POLYMARKET_WALLET_KEY) {
-    throw new Error('POLYMARKET_WALLET_KEY not configured');
-  }
-
-  // This will be replaced with actual EIP-712 signing
-  // For dry run mode this is never reached
-  console.warn('[PolyExec] Order signing not yet implemented. Set PREDICT_POLY_DRY_RUN=true.');
-  return { signature: '', timestamp, nonce };
-}
-
-/**
- * Get USDC balance from Polygon wallet
+ * Get USDC balance from Polygon wallet via RPC
  */
 export async function getUSDCBalance(): Promise<number | null> {
   if (!config.POLYGON_RPC_URL || !config.POLYMARKET_WALLET_ADDRESS) return null;
 
   try {
-    // ERC-20 balanceOf call
     const data = `0x70a08231000000000000000000000000${config.POLYMARKET_WALLET_ADDRESS.replace('0x', '').padStart(64, '0')}`;
     const res = await fetch(config.POLYGON_RPC_URL, {
       method: 'POST',
@@ -277,7 +288,6 @@ export async function getUSDCBalance(): Promise<number | null> {
 
     const json = await res.json() as any;
     if (json.result) {
-      // USDC has 6 decimals
       return parseInt(json.result, 16) / 1_000_000;
     }
     return null;

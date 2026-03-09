@@ -1,10 +1,11 @@
-import { config, validateConfig } from './config';
+import { config, validateConfig, loadConfigOverrides } from './config';
 import { pool } from './db';
 import { startBot } from './telegram/bot';
 import { startWebhookServer, setTelegramNotifier } from './services/webhook-server';
 import { startScheduler, stopScheduler, setCronNotifier } from './services/cron-scheduler';
 import { setProgressNotifier } from './agents/router';
 import { setBudgetAlertNotifier } from './services/cost-tracker';
+import { priceFeed } from './services/predict/price-feed';
 
 async function main(): Promise<void> {
   console.log('[Agent Service] Starting...');
@@ -22,6 +23,9 @@ async function main(): Promise<void> {
     console.error('[DB] Connection failed:', (err as Error).message);
     process.exit(1);
   }
+
+  // 2b. Load runtime config overrides from agent_config table
+  await loadConfigOverrides();
 
   // 3. Start Telegram bot
   const bot = startBot();
@@ -68,13 +72,17 @@ async function main(): Promise<void> {
   setProgressNotifier(telegramNotifier);
   setBudgetAlertNotifier(telegramNotifier);
 
-  // 8. Start cron scheduler
+  // 8. Start price feed for Polymarket scanner
+  priceFeed.start();
+
+  // 9. Start cron scheduler
   await startScheduler();
 
-  // 9. Graceful shutdown
+  // 10. Graceful shutdown
   const shutdown = async (): Promise<void> => {
     console.log('[Agent Service] Shutting down...');
     stopScheduler();
+    priceFeed.stop();
     bot.stopPolling();
     webhookServer.close();
     await pool.end();

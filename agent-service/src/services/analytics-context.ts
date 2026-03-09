@@ -183,6 +183,27 @@ export async function buildPerformanceBrief(): Promise<string> {
       );
     }
 
+    // Best visual strategies
+    const visuals = await query<{
+      dimension_value: string;
+      avg_engagement_rate: string;
+      post_count: string;
+    }>(`
+      SELECT dimension_value, avg_engagement_rate, post_count
+      FROM content_performance
+      WHERE dimension = 'visual_strategy' AND period = '30d' AND post_count >= 2
+      ORDER BY avg_engagement_rate DESC
+      LIMIT 5
+    `);
+
+    if (visuals.length >= 2) {
+      const best = visuals[0];
+      const worst = visuals[visuals.length - 1];
+      workingInsights.push(
+        `- Visual: "${best.dimension_value}" (${(parseFloat(best.avg_engagement_rate) * 100).toFixed(1)}% eng, ${best.post_count} posts) outperforms "${worst.dimension_value}" (${(parseFloat(worst.avg_engagement_rate) * 100).toFixed(1)}%)`
+      );
+    }
+
     if (workingInsights.length > 0) {
       sections.push(`### What's Working\n${workingInsights.join('\n')}`);
     }
@@ -191,10 +212,12 @@ export async function buildPerformanceBrief(): Promise<string> {
     const topPosts = await query<{
       tweet_id: string;
       content: string;
+      content_bucket: string | null;
+      visual_strategy: string | null;
       engagement_rate: string;
       likes: string;
     }>(`
-      SELECT pa.tweet_id, pa.content, ps.engagement_rate, ps.likes
+      SELECT pa.tweet_id, pa.content, pa.content_bucket, pa.visual_strategy, ps.engagement_rate, ps.likes
       FROM post_analytics pa
       JOIN post_snapshots ps ON ps.post_analytics_id = pa.id AND ps.interval_label = '24h'
       WHERE pa.created_at >= NOW() - INTERVAL '30 days'
@@ -205,7 +228,8 @@ export async function buildPerformanceBrief(): Promise<string> {
     if (topPosts.length > 0) {
       const topLines = topPosts.map((p, i) => {
         const snippet = p.content.substring(0, 60).replace(/\n/g, ' ');
-        return `${i + 1}. "${snippet}..." (${(parseFloat(p.engagement_rate) * 100).toFixed(1)}% eng, ${p.likes} likes)`;
+        const meta = [p.content_bucket, p.visual_strategy ? `visual: ${p.visual_strategy}` : null].filter(Boolean).join(', ');
+        return `${i + 1}. "${snippet}..." (${(parseFloat(p.engagement_rate) * 100).toFixed(1)}% eng, ${p.likes} likes)${meta ? ` [${meta}]` : ''}`;
       });
       sections.push(`### Top ${topPosts.length} Posts\n${topLines.join('\n')}`);
     }
@@ -214,10 +238,12 @@ export async function buildPerformanceBrief(): Promise<string> {
     const bottomPosts = await query<{
       tweet_id: string;
       content: string;
+      content_bucket: string | null;
+      visual_strategy: string | null;
       engagement_rate: string;
       likes: string;
     }>(`
-      SELECT pa.tweet_id, pa.content, ps.engagement_rate, ps.likes
+      SELECT pa.tweet_id, pa.content, pa.content_bucket, pa.visual_strategy, ps.engagement_rate, ps.likes
       FROM post_analytics pa
       JOIN post_snapshots ps ON ps.post_analytics_id = pa.id AND ps.interval_label = '24h'
       WHERE pa.created_at >= NOW() - INTERVAL '30 days'
@@ -229,7 +255,8 @@ export async function buildPerformanceBrief(): Promise<string> {
     if (bottomPosts.length > 0) {
       const bottomLines = bottomPosts.map((p, i) => {
         const snippet = p.content.substring(0, 60).replace(/\n/g, ' ');
-        return `${i + 1}. "${snippet}..." (${(parseFloat(p.engagement_rate) * 100).toFixed(1)}% eng, ${p.likes} likes)`;
+        const meta = [p.content_bucket, p.visual_strategy ? `visual: ${p.visual_strategy}` : null].filter(Boolean).join(', ');
+        return `${i + 1}. "${snippet}..." (${(parseFloat(p.engagement_rate) * 100).toFixed(1)}% eng, ${p.likes} likes)${meta ? ` [${meta}]` : ''}`;
       });
       sections.push(`### Bottom ${bottomPosts.length} Posts (avoid these patterns)\n${bottomLines.join('\n')}`);
     }

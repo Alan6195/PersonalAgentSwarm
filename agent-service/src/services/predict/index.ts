@@ -37,4 +37,7 @@ export type { PolyTradeResult } from './execute-polymarket';
 export { handleManifoldScan, handlePolymarketScan, handleEquitySnapshot, handleDailyRiskReset, handleResolutionCheck, handleHypothesisReview } from './cron';
 
 // Telegram commands
-export { handlePredictCommand } from './telegram';
+export { handlePredictCommand, checkEdgeCandidateNotification } from './telegram';
+
+// Price feed
+export { priceFeed } from './price-feed';

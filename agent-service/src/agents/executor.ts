@@ -197,6 +197,17 @@ export async function run(context: AgentContext): Promise<AgentResponse> {
     if (context.agentId === 'social-media' && twitter.isConfigured()) {
       const scanKeywords = /\b(scan|trending|analyze|intelligence|what.*tweet about|topics|what should i post|feed|research|market|opportunities)\b/i;
       if (scanKeywords.test(context.userMessage)) {
+        // Inject topic velocity before scan results
+        try {
+          const velocity = await xIntelligence.computeTopicVelocity();
+          if (velocity) {
+            agentPrompt += `\n\n${velocity}`;
+            console.log(`[Executor] Injected topic velocity for social-media`);
+          }
+        } catch (velErr) {
+          console.warn('[Executor] Topic velocity injection failed:', (velErr as Error).message);
+        }
+
         try {
           const report = await xIntelligence.runIntelligenceScan(
             ['ai_agents', 'ai_adoption', 'agent_frameworks', 'ai_business_value'],
@@ -240,6 +251,18 @@ export async function run(context: AgentContext): Promise<AgentResponse> {
         }
       } catch (briefErr) {
         console.warn('[Executor] Performance brief injection failed:', (briefErr as Error).message);
+      }
+
+      // Inject confirmed content hypotheses (self-improvement loop)
+      try {
+        const { getConfirmedHypotheses } = await import('../services/hypothesis-engine');
+        const hypotheses = await getConfirmedHypotheses();
+        if (hypotheses.length > 0) {
+          agentPrompt += `\n\n${hypotheses}`;
+          console.log(`[Executor] Injected content hypotheses (${hypotheses.length} chars) for social-media`);
+        }
+      } catch (hypErr) {
+        console.warn('[Executor] Hypothesis injection failed:', (hypErr as Error).message);
       }
     }
 
