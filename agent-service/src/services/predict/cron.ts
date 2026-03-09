@@ -399,44 +399,63 @@ export async function handleManifoldScan(taskId: number): Promise<string> {
 }
 
 /**
- * Equity snapshot: record current balance and stats
+ * Equity snapshot: record current balance and stats for ALL platforms
  * Schedule: every 15 minutes
  */
 export async function handleEquitySnapshot(taskId: number): Promise<string> {
-  const platform = 'manifold';
-  const bankroll = await getCurrentBankroll(platform);
+  const results: string[] = [];
 
-  // Get open positions
-  const openPos = await queryOne<{ count: string; total: string }>(
-    `SELECT COUNT(*) as count, COALESCE(SUM(bet_size), 0) as total
-     FROM market_positions WHERE platform = $1 AND status = 'open'`,
-    [platform]
-  );
+  // Snapshot each active platform
+  for (const platform of ['manifold', 'polymarket'] as const) {
+    try {
+      let bankroll: number;
+      if (platform === 'manifold') {
+        if (!config.MANIFOLD_API_KEY) continue;
+        bankroll = await getCurrentBankroll(platform);
+      } else {
+        if (!config.POLYMARKET_API_KEY) continue;
+        bankroll = await getPolyBankroll();
+      }
 
-  // Get win rate (exclude scanner bug positions)
-  const stats = await queryOne<any>(
-    `SELECT
-       COUNT(*) FILTER (WHERE status IN ('closed_win', 'closed_loss')) as total,
-       COUNT(*) FILTER (WHERE status = 'closed_win') as wins
-     FROM market_positions
-     WHERE platform = $1
-       AND (notes IS NULL OR notes NOT LIKE 'scanner bug%')`,
-    [platform]
-  );
+      // Get open positions
+      const openPos = await queryOne<{ count: string; total: string }>(
+        `SELECT COUNT(*) as count, COALESCE(SUM(bet_size), 0) as total
+         FROM market_positions WHERE platform = $1 AND status = 'open'`,
+        [platform]
+      );
 
-  const totalTrades = parseInt(stats?.total || '0');
-  const wins = parseInt(stats?.wins || '0');
-  const winRate = totalTrades > 0 ? wins / totalTrades : 0;
-  const unrealizedPnl = 0; // TODO: calculate from open positions
-  const totalEquity = bankroll + unrealizedPnl;
+      // Get win rate (exclude scanner bug positions and early bugged trades)
+      const stats = await queryOne<any>(
+        `SELECT
+           COUNT(*) FILTER (WHERE status IN ('closed_win', 'closed_loss')) as total,
+           COUNT(*) FILTER (WHERE status = 'closed_win') as wins
+         FROM market_positions
+         WHERE platform = $1
+           AND (notes IS NULL OR notes NOT LIKE 'scanner bug%')
+           AND (notes IS NULL OR notes NOT LIKE 'Auto-closed: market expired%')`,
+        [platform]
+      );
 
-  await query(
-    `INSERT INTO equity_snapshots (platform, bankroll, unrealized_pnl, total_equity, positions_open, win_rate, total_trades)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [platform, bankroll, unrealizedPnl, totalEquity, parseInt(openPos?.count || '0'), winRate, totalTrades]
-  );
+      const totalTrades = parseInt(stats?.total || '0');
+      const wins = parseInt(stats?.wins || '0');
+      const winRate = totalTrades > 0 ? wins / totalTrades : 0;
+      const unrealizedPnl = 0; // TODO: calculate from open positions
+      const totalEquity = bankroll + unrealizedPnl;
 
-  return `Equity: M$${totalEquity.toFixed(0)} | ${parseInt(openPos?.count || '0')} open | ${totalTrades} total (${(winRate * 100).toFixed(1)}% WR)`;
+      await query(
+        `INSERT INTO equity_snapshots (platform, bankroll, unrealized_pnl, total_equity, positions_open, win_rate, total_trades)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [platform, bankroll, unrealizedPnl, totalEquity, parseInt(openPos?.count || '0'), winRate, totalTrades]
+      );
+
+      const prefix = platform === 'manifold' ? 'M$' : '$';
+      results.push(`${platform}: ${prefix}${totalEquity.toFixed(2)} | ${parseInt(openPos?.count || '0')} open | ${totalTrades} trades (${(winRate * 100).toFixed(1)}% WR)`);
+    } catch (err: any) {
+      results.push(`${platform}: snapshot failed: ${err.message}`);
+    }
+  }
+
+  return `Equity: ${results.join(' | ')}`;
 }
 
 /**

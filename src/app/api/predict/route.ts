@@ -34,7 +34,21 @@ async function getPlatformStats(platform: string) {
      ORDER BY snapshot_at DESC LIMIT 1`,
     [platform]
   );
-  const bankroll = equityRows.length > 0 ? parseFloat((equityRows[0] as any).balance) || 0 : (platform === 'manifold' ? 1000 : 50);
+  let bankroll: number;
+  if (equityRows.length > 0) {
+    bankroll = parseFloat((equityRows[0] as any).balance) || 0;
+  } else {
+    // Fallback: try daily_risk_state, then env default
+    const riskFallback = await query(
+      `SELECT current_bankroll FROM daily_risk_state WHERE platform = $1 ORDER BY date DESC LIMIT 1`,
+      [platform]
+    );
+    if (riskFallback.length > 0) {
+      bankroll = parseFloat((riskFallback[0] as any).current_bankroll) || 0;
+    } else {
+      bankroll = platform === 'manifold' ? 1000 : 50;
+    }
+  }
 
   // Bankroll 24h ago for change calculation
   const equityRows24h = await query(
@@ -46,7 +60,7 @@ async function getPlatformStats(platform: string) {
   const bankroll24h = equityRows24h.length > 0 ? parseFloat((equityRows24h[0] as any).balance) || bankroll : bankroll;
   const bankrollChange = bankroll - bankroll24h;
 
-  // Trade stats (exclude scanner bug positions)
+  // Trade stats (exclude scanner bug positions AND early bugged expired-market trades)
   const statsRows = await query(
     `SELECT
        COUNT(*) FILTER (WHERE status IN ('closed_win', 'closed_loss')) as total_trades,
@@ -54,10 +68,12 @@ async function getPlatformStats(platform: string) {
        COUNT(*) FILTER (WHERE status = 'closed_loss') as losses,
        COALESCE(SUM(pnl) FILTER (WHERE status IN ('closed_win', 'closed_loss')), 0) as total_pnl,
        COUNT(*) FILTER (WHERE status = 'open') as open_positions,
+       COALESCE(SUM(bet_size) FILTER (WHERE status = 'open'), 0) as open_exposure,
        COALESCE(SUM(pnl) FILTER (WHERE status IN ('closed_win', 'closed_loss') AND opened_at >= CURRENT_DATE), 0) as daily_pnl
      FROM market_positions
      WHERE platform = $1
-       AND (notes IS NULL OR notes NOT LIKE 'scanner bug%')`,
+       AND (notes IS NULL OR notes NOT LIKE 'scanner bug%')
+       AND (notes IS NULL OR notes NOT LIKE 'Auto-closed: market expired%')`,
     [platform]
   );
   const s = (statsRows[0] || {}) as Record<string, any>;
@@ -67,9 +83,10 @@ async function getPlatformStats(platform: string) {
   const winRate = totalTrades > 0 ? wins / totalTrades : 0;
   const totalPnl = parseFloat(s.total_pnl || "0");
   const openPositions = parseInt(s.open_positions || "0");
+  const openExposure = parseFloat(s.open_exposure || "0");
   const dailyPnl = parseFloat(s.daily_pnl || "0");
 
-  return { bankroll, bankrollChange, winRate, trades: totalTrades, wins, losses, openPositions, dailyPnl, totalPnl };
+  return { bankroll, bankrollChange, winRate, trades: totalTrades, wins, losses, openPositions, openExposure, dailyPnl, totalPnl };
 }
 
 async function getDashboard() {
@@ -227,12 +244,13 @@ async function getDashboard() {
     if (dd > maxDrawdown) maxDrawdown = dd;
   }
 
-  // Win streak
+  // Win streak (exclude bugged trades)
   const streakRows = await query(
     `SELECT status FROM market_positions
      WHERE platform = 'polymarket'
        AND status IN ('closed_win', 'closed_loss')
        AND (notes IS NULL OR notes NOT LIKE 'scanner bug%')
+       AND (notes IS NULL OR notes NOT LIKE 'Auto-closed: market expired%')
      ORDER BY closed_at DESC`
   );
   let winStreak = 0;
@@ -363,6 +381,7 @@ async function getDashboard() {
       wins: polymarket.wins,
       losses: polymarket.losses,
       openPositions: polymarket.openPositions,
+      openExposure: (polymarket as any).openExposure || 0,
       dailyPnl: polymarket.dailyPnl,
       totalPnl: polymarket.totalPnl,
       dryRun: polyDryRun,

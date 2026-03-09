@@ -17,6 +17,7 @@ interface PlatformStats {
 
 interface PolymarketStats extends PlatformStats {
   dryRun: boolean;
+  openExposure?: number;
 }
 
 interface Position {
@@ -540,10 +541,10 @@ export default function PredictPage() {
           { label: 'BANKROLL',   value: fmtUsd(bal),                    sub: fmt2(p.bankrollChange),              color: C.green },
           { label: 'WIN RATE',   value: pct(wr),                        sub: `${p.wins}W / ${p.losses}L`,        color: wr >= 0.55 ? C.green : wr > 0 ? C.yellow : C.text },
           { label: 'TOTAL P&L',  value: fmt2(p.totalPnl),               sub: null,                                color: p.totalPnl >= 0 ? C.green : C.red },
-          { label: 'TRADES',     value: String(p.trades),                sub: `${p.openPositions} open`,           color: C.text },
+          { label: 'TRADES',     value: String(p.trades + p.openPositions), sub: `${p.trades} closed · ${p.openPositions} open`, color: C.text },
           { label: 'DAILY P&L',  value: fmt2(p.dailyPnl),               sub: null,                                color: p.dailyPnl >= 0 ? C.green : C.red },
-          { label: 'NET P&L',    value: fmt2(p.totalPnl),                sub: null,                                color: p.totalPnl >= 0 ? C.green : C.red },
-          { label: 'DEPLOYED',   value: pct(risk.exposure),              sub: null,                                color: C.cyan },
+          { label: 'EXPOSURE',   value: fmtUsd((p as PolymarketStats).openExposure || 0), sub: `${p.openPositions} positions`, color: C.cyan },
+          { label: 'DEPLOYED',   value: bal > 0 ? pct(((p as PolymarketStats).openExposure || 0) / bal) : '0.0%', sub: null, color: C.cyan },
         ].map((k, i) => (
           <div key={k.label} style={{ padding: '7px 12px', borderRight: i < 6 ? `1px solid ${C.border}` : 'none' }}>
             <div style={{ fontSize: 8, color: C.label, letterSpacing: '0.12em', marginBottom: 4 }}>{k.label}</div>
@@ -765,7 +766,7 @@ export default function PredictPage() {
                 {data.polymarket.dryRun ? 'DRY RUN' : 'LIVE'}
               </span>
               <span style={{ fontSize: 9, color: C.dim }}>
-                {data.polymarket.trades} trades · {pct(data.polymarket.winRate)} WR
+                {data.polymarket.trades + data.polymarket.openPositions} trades · {pct(data.polymarket.winRate)} WR
               </span>
             </div>
           </Panel>
