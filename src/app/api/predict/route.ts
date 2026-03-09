@@ -310,10 +310,17 @@ async function getDashboard() {
   }
 
   // Intel signals summary (from shared_signals table)
+  // Topics are stored as full names ('bitcoin', 'ethereum', 'solana', 'xrp')
+  // Map them to ticker symbols for the dashboard
+  const TOPIC_TO_TICKER: Record<string, string> = {
+    bitcoin: 'BTC', btc: 'BTC',
+    ethereum: 'ETH', eth: 'ETH',
+    solana: 'SOL', sol: 'SOL',
+    xrp: 'XRP',
+  };
   const intelRows = await query(
     `SELECT
-       COALESCE(SUBSTRING(topic FROM '[A-Z]{2,5}'), topic) as asset_key,
-       direction, strength,
+       topic, direction, strength,
        EXTRACT(EPOCH FROM (NOW() - created_at)) / 60 as age_minutes,
        created_at
      FROM shared_signals
@@ -324,7 +331,8 @@ async function getDashboard() {
   const intelSignals: Record<string, any> = {};
   for (const row of intelRows) {
     const r = row as any;
-    const assetKey = (r.asset_key || '').toUpperCase();
+    const topic = (r.topic || '').toLowerCase();
+    const assetKey = TOPIC_TO_TICKER[topic] || topic.toUpperCase();
     if (!assetKey || intelSignals[assetKey]) continue; // take freshest per asset
     intelSignals[assetKey] = {
       direction: r.direction,
