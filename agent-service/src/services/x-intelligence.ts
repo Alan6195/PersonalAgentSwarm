@@ -74,6 +74,26 @@ const RESEARCH_QUERIES: Record<string, string[]> = {
     '(AI agent OR "AI automation") consultant OR agency OR freelance -is:retweet lang:en',
     '"AI solutions" small business OR SMB -is:retweet lang:en',
   ],
+  // Macro events that move crypto (oil, war, risk-off, rate cuts, institutional)
+  crypto_macro: [
+    'oil price crypto bitcoin -is:retweet lang:en',
+    'bitcoin war risk-off OR "risk off" -is:retweet lang:en',
+    'crypto crash OR sell-off macro -is:retweet lang:en',
+    '$BTC oil OR war OR recession -is:retweet lang:en',
+    'bitcoin bear oil spike OR surge -is:retweet lang:en',
+    'crypto macro recession OR crisis OR tariff -is:retweet lang:en',
+    'bitcoin rally "rate cut" OR dovish OR stimulus -is:retweet lang:en',
+    'crypto institutional adoption OR inflows -is:retweet lang:en',
+  ],
+  // Direct crypto sentiment (bearish AND bullish price action talk)
+  crypto_sentiment: [
+    'bitcoin crash OR dump OR selling -is:retweet lang:en',
+    'ethereum sell OR bear OR dropping -is:retweet lang:en',
+    'crypto fear OR panic OR liquidation -is:retweet lang:en',
+    'BTC bearish OR breakdown OR support -is:retweet lang:en',
+    'bitcoin pump OR breakout OR moon -is:retweet lang:en',
+    'crypto rally OR surge OR accumulate -is:retweet lang:en',
+  ],
 };
 
 // Minimum engagement thresholds for relevance
@@ -205,7 +225,7 @@ function classifyTweet(tweet: TweetV2): {
  * Run a comprehensive X intelligence scan across multiple topics
  */
 export async function runIntelligenceScan(
-  topics: string[] = ['ai_agents', 'ai_adoption', 'agent_frameworks'],
+  topics: string[] = ['ai_agents', 'ai_adoption', 'agent_frameworks', 'crypto_macro', 'crypto_sentiment'],
   tweetsPerQuery: number = 15
 ): Promise<XIntelligenceReport> {
   if (!twitter.isConfigured()) {
@@ -699,48 +719,90 @@ export function formatSearchResults(tweets: TweetV2[], searchQuery: string): str
 // ---------------------------------------------------------------------------
 
 const MARKET_KEYWORDS: Record<string, RegExp> = {
-  crypto: /\b(bitcoin|btc|ethereum|eth|solana|sol|crypto|defi|web3)\b/i,
+  crypto: /\b(bitcoin|btc|ethereum|eth|solana|sol|xrp|crypto|defi|web3)\b/i,
   ai_tech: /\b(openai|gpt|claude|anthropic|google ai|gemini|llm|foundation model)\b/i,
   economics: /\b(fed|interest rate|inflation|gdp|unemployment|recession|tariff)\b/i,
   politics: /\b(election|congress|senate|president|supreme court|policy|regulation)\b/i,
+  macro: /\b(oil|crude|opec|war|conflict|military|risk.?off|flight.?to.?safety|safe.?haven|gold|treasury|bond.?yield|geopolitic)\b/i,
 };
+
+// Map specific asset mentions in tweet text to asset names for per-asset signal writing
+const ASSET_PATTERNS: Record<string, RegExp> = {
+  bitcoin: /\b(bitcoin|btc|\$btc)\b/i,
+  ethereum: /\b(ethereum|eth|\$eth)\b/i,
+  solana: /\b(solana|sol|\$sol)\b/i,
+  xrp: /\b(xrp|\$xrp)\b/i,
+};
+
+// Expanded sentiment words for financial/macro context
+const BULLISH_WORDS = /\b(bullish|surge|moon|rally|growth|positive|up|gain|win|success|pump|breakout|recovery|bounce|accumulate|support|buy)\b/gi;
+const BEARISH_WORDS = /\b(bearish|crash|dump|decline|negative|down|loss|fail|risk|concern|panic|fear|sell|liquidat|capitulat|collapse|plunge|tank|blood|war|crisis|recession|risk.?off)\b/gi;
 
 async function writeSharedSignals(
   trendingSummary: string[],
   insights: TweetInsight[]
 ): Promise<void> {
   const marketRelevant = insights.filter((insight) => {
-    const text = insight.text.toLowerCase();
+    const text = insight.text;
     return Object.values(MARKET_KEYWORDS).some((rx) => rx.test(text));
   });
 
   if (marketRelevant.length === 0) return;
 
-  const topicSignals = new Map<string, { count: number; totalSentiment: number; topTweet: string }>();
+  // Phase 1: Aggregate sentiment per asset (not per generic topic).
+  // The predict agent's intel-signal reader queries by asset name (bitcoin, ethereum, etc.),
+  // so we must write signals with asset-specific topics.
+  const assetSignals = new Map<string, { count: number; totalSentiment: number; topTweet: string; isMacro: boolean }>();
 
   for (const insight of marketRelevant) {
-    const text = insight.text.toLowerCase();
-    for (const [topic, rx] of Object.entries(MARKET_KEYWORDS)) {
-      if (!rx.test(text)) continue;
+    const text = insight.text;
+    const isCrypto = MARKET_KEYWORDS.crypto.test(text);
+    const isMacro = MARKET_KEYWORDS.macro.test(text);
 
-      const existing = topicSignals.get(topic) || { count: 0, totalSentiment: 0, topTweet: '' };
+    // Skip non-crypto, non-macro tweets (ai_tech, politics, etc. without crypto mention)
+    if (!isCrypto && !isMacro) continue;
+
+    // Compute sentiment with expanded word lists
+    const posWords = (text.match(BULLISH_WORDS) || []).length;
+    const negWords = (text.match(BEARISH_WORDS) || []).length;
+    const sentiment = posWords - negWords;
+
+    // Detect which specific assets are mentioned
+    const mentionedAssets: string[] = [];
+    for (const [assetName, pattern] of Object.entries(ASSET_PATTERNS)) {
+      if (pattern.test(text)) mentionedAssets.push(assetName);
+    }
+
+    // If tweet mentions "crypto" generically or is macro (oil/war affecting all crypto),
+    // apply signal to ALL four assets
+    if (mentionedAssets.length === 0 && (isCrypto || isMacro)) {
+      mentionedAssets.push('bitcoin', 'ethereum', 'solana', 'xrp');
+    }
+
+    for (const asset of mentionedAssets) {
+      const existing = assetSignals.get(asset) || { count: 0, totalSentiment: 0, topTweet: '', isMacro: false };
       existing.count++;
-      const posWords = (text.match(/\b(bullish|surge|moon|rally|growth|positive|up|gain|win|success)\b/g) || []).length;
-      const negWords = (text.match(/\b(bearish|crash|dump|decline|negative|down|loss|fail|risk|concern)\b/g) || []).length;
-      existing.totalSentiment += posWords - negWords;
+      existing.totalSentiment += sentiment;
+      existing.isMacro = existing.isMacro || isMacro;
       if (!existing.topTweet || insight.relevanceScore > 5) {
         existing.topTweet = insight.text.substring(0, 200);
       }
-      topicSignals.set(topic, existing);
+      assetSignals.set(asset, existing);
     }
   }
 
+  // Phase 2: Write per-asset signals
   let written = 0;
-  for (const [topic, signal] of topicSignals) {
-    if (written >= 5) break;
+  for (const [asset, signal] of assetSignals) {
+    if (written >= 10) break; // up to 10 signals (4 assets * possible multiple)
 
     const direction = signal.totalSentiment > 0 ? 'bullish' : signal.totalSentiment < 0 ? 'bearish' : 'neutral';
-    const strength = Math.min(signal.count / 10, 1.0);
+    const strength = Math.min(signal.count / 5, 1.0); // reach 1.0 at 5 tweets (was /10, too conservative)
+
+    // Alert flag: strong macro signal (bearish OR bullish) should trigger immediate scan
+    const alertImmediately = signal.isMacro && direction !== 'neutral' && strength >= 0.70;
+
+    const signalType = signal.isMacro ? 'macro_sentiment' : 'velocity';
 
     try {
       await dbQuery(
@@ -748,20 +810,30 @@ async function writeSharedSignals(
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [
           'social-media',
-          'velocity',
-          topic,
+          signalType,
+          asset, // per-asset topic (bitcoin, ethereum, etc.) so intel-signal reader can find it
           direction,
           strength,
-          JSON.stringify({ tweet_count: signal.count, sentiment_score: signal.totalSentiment, sample: signal.topTweet }),
+          JSON.stringify({
+            tweet_count: signal.count,
+            sentiment_score: signal.totalSentiment,
+            sample: signal.topTweet,
+            is_macro: signal.isMacro,
+            alert_immediately: alertImmediately,
+          }),
         ]
       );
       written++;
+
+      if (alertImmediately) {
+        console.log(`[XIntelligence] ALERT: Strong ${direction} macro signal for ${asset} (strength=${strength.toFixed(2)}, tweets=${signal.count})`);
+      }
     } catch {
       // shared_signals table may not exist yet; non-critical
     }
   }
 
   if (written > 0) {
-    console.log(`[XIntelligence] Wrote ${written} shared signals for predict agent`);
+    console.log(`[XIntelligence] Wrote ${written} shared signals for predict agent (per-asset)`);
   }
 }
