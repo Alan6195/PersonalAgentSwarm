@@ -139,29 +139,77 @@ async function getDashboard() {
     balance: parseFloat(row.balance) || 0,
   }));
 
-  // Open positions (both platforms)
+  // Open positions (both platforms) with enriched data
   const positionRows = await query(
-    `SELECT id, platform, question as market_question, direction,
-            p_market, p_model, edge, bet_size, intel_aligned, status, pnl, opened_at
+    `SELECT id, platform, market_id, question as market_question, direction,
+            p_market, p_model, edge, bet_size, fill_price, asset,
+            intel_aligned, status, pnl, opened_at
      FROM market_positions
      WHERE status = 'open'
      ORDER BY opened_at DESC
      LIMIT 20`
   );
-  const positions = positionRows.map((row: any) => ({
-    id: row.id,
-    platform: row.platform,
-    market_question: row.market_question,
-    direction: row.direction,
-    p_market: parseFloat(row.p_market) || 0,
-    p_model: parseFloat(row.p_model) || 0,
-    edge: parseFloat(row.edge) || 0,
-    bet_size: parseFloat(row.bet_size) || 0,
-    intel_aligned: row.intel_aligned === true,
-    status: row.status,
-    pnl: row.pnl != null ? parseFloat(row.pnl) : null,
-    opened_at: row.opened_at,
-  }));
+
+  // Fetch live market prices for open Polymarket positions (parallel)
+  const liveData = new Map<number, { currentPrice: number; timeRemainingMin: number }>();
+  const polyPositions = positionRows.filter((r: any) => r.platform === 'polymarket' && r.market_id);
+  if (polyPositions.length > 0) {
+    const pricePromises = polyPositions.map(async (row: any) => {
+      try {
+        const res = await fetch(`https://clob.polymarket.com/markets/${row.market_id}`, {
+          signal: AbortSignal.timeout(3000),
+        });
+        if (!res.ok) return;
+        const market = await res.json() as any;
+        const tokens = market.tokens || [];
+        // Find the token matching our direction
+        const ourOutcome = row.direction === 'YES' ? 'Up' : 'Down';
+        const token = tokens.find((t: any) => t.outcome === ourOutcome);
+        const currentPrice = token ? parseFloat(token.price || '0') : 0;
+        // Parse time remaining from question
+        const timeRemainingMin = getTimeRemainingMin(row.market_question);
+        liveData.set(row.id, { currentPrice, timeRemainingMin });
+      } catch { /* non-critical, will show without live data */ }
+    });
+    await Promise.allSettled(pricePromises);
+  }
+
+  const positions = positionRows.map((row: any) => {
+    const betSize = parseFloat(row.bet_size) || 0;
+    const fillPrice = parseFloat(row.fill_price) || parseFloat(row.p_market) || 0.50;
+    const shares = fillPrice > 0 ? betSize / fillPrice : 0;
+    const live = liveData.get(row.id);
+    const currentPrice = live?.currentPrice || null;
+    const unrealizedPnl = currentPrice != null && currentPrice > 0
+      ? (currentPrice - fillPrice) * shares
+      : null;
+    // Potential outcomes (binary market)
+    const potentialWin = shares * (1 - fillPrice) * 0.975; // 2.5% fee on winnings
+    const potentialLoss = -betSize;
+
+    return {
+      id: row.id,
+      platform: row.platform,
+      market_question: row.market_question,
+      direction: row.direction,
+      asset: row.asset || null,
+      p_market: parseFloat(row.p_market) || 0,
+      p_model: parseFloat(row.p_model) || 0,
+      edge: parseFloat(row.edge) || 0,
+      bet_size: betSize,
+      fill_price: fillPrice,
+      shares: +shares.toFixed(2),
+      current_price: currentPrice,
+      unrealized_pnl: unrealizedPnl != null ? +unrealizedPnl.toFixed(4) : null,
+      potential_win: +potentialWin.toFixed(4),
+      potential_loss: +potentialLoss.toFixed(4),
+      time_remaining_min: live?.timeRemainingMin ?? null,
+      intel_aligned: row.intel_aligned === true,
+      status: row.status,
+      pnl: row.pnl != null ? parseFloat(row.pnl) : null,
+      opened_at: row.opened_at,
+    };
+  });
 
   // Recent scans (both platforms)
   const scanRows = await query(
@@ -451,4 +499,36 @@ async function getSharedSignals() {
   );
 
   return NextResponse.json({ signals });
+}
+
+/**
+ * Parse time remaining from market question like "March 9, 5:00PM-5:05PM ET"
+ * Returns minutes until market closes, or -1 if unparseable.
+ */
+function getTimeRemainingMin(question: string): number {
+  const match = question.match(/(\d{1,2}):(\d{2})(AM|PM)\s*ET$/i);
+  if (!match) return -1;
+
+  let hours = parseInt(match[1]);
+  const minutes = parseInt(match[2]);
+  const isPM = match[3].toUpperCase() === 'PM';
+
+  if (isPM && hours !== 12) hours += 12;
+  if (!isPM && hours === 12) hours = 0;
+
+  // Convert ET to UTC: use Intl to get current ET offset dynamically
+  const now = new Date();
+  const etHour = parseInt(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour: 'numeric',
+      hour12: false,
+    }).format(now)
+  );
+  const etOffset = ((now.getUTCHours() - etHour) + 24) % 24;
+
+  const expiry = new Date(now);
+  expiry.setUTCHours(hours + etOffset, minutes, 0, 0);
+
+  return (expiry.getTime() - now.getTime()) / 60000;
 }

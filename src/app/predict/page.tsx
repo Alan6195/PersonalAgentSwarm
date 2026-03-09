@@ -25,10 +25,18 @@ interface Position {
   platform: string;
   market_question: string;
   direction: string;
+  asset: string | null;
   p_market: number;
   p_model: number;
   edge: number;
   bet_size: number;
+  fill_price: number;
+  shares: number;
+  current_price: number | null;
+  unrealized_pnl: number | null;
+  potential_win: number;
+  potential_loss: number;
+  time_remaining_min: number | null;
   intel_aligned: boolean;
   status: string;
   pnl: number | null;
@@ -279,36 +287,20 @@ function FRow({ label, expr, value, vc }: { label?: string; expr?: string; value
   );
 }
 
-// ── Phase gate ────────────────────────────────────────────────────────────
-function PhaseGatePanel({ gate }: { gate: PhaseGate }) {
-  const progress = Math.min(gate.trades / gate.tradesTarget, 1);
-  const wrOk = gate.winRate >= gate.winRateTarget;
-  const shOk = gate.sharpe >= gate.sharpeTarget;
-  const trOk = gate.trades >= gate.tradesTarget;
+// ── Trading stats ─────────────────────────────────────────────────────────
+function TradingStatsPanel({ gate, perf }: { gate: PhaseGate; perf: Performance }) {
   return (
-    <Panel title="Phase Gate · Dry Run → Live USDC">
+    <Panel title="Trading Stats · 24/7 Order Flow">
       <div style={{ padding: '8px 10px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-          <span style={{ fontSize: 9, color: gate.phase2Unlocked ? C.green : C.yellow, fontFamily: 'monospace' }}>
-            {gate.phase2Unlocked ? '✓ PHASE 2 UNLOCKED' : '⚠ CONTINUE PAPER TRADING'}
-          </span>
-          <span style={{ fontSize: 9, color: C.label, fontFamily: 'monospace' }}>{gate.trades}/{gate.tradesTarget} trades</span>
-        </div>
-        <div style={{ height: 3, background: C.dimmer, marginBottom: 8 }}>
-          <div style={{ height: '100%', width: `${progress * 100}%`, background: gate.phase2Unlocked ? C.green : C.greenDim, transition: 'width 1s' }} />
-        </div>
         <div style={{ display: 'flex', gap: 16 }}>
           {[
-            { l: 'TRADES',  v: `${gate.trades}/${gate.tradesTarget}`, ok: trOk },
-            { l: 'WIN RATE', v: pct(gate.winRate),                    ok: wrOk, tgt: `≥${pct(gate.winRateTarget)}` },
-            { l: 'SHARPE',  v: gate.sharpe.toFixed(2),                ok: shOk, tgt: `≥${gate.sharpeTarget}` },
+            { l: 'TRADES',   v: String(gate.trades), c: C.text },
+            { l: 'WIN RATE', v: pct(gate.winRate),   c: gate.winRate >= 0.55 ? C.green : gate.winRate > 0 ? C.yellow : C.text },
+            { l: 'SHARPE',   v: gate.sharpe.toFixed(2), c: gate.sharpe >= 1.0 ? C.green : C.yellow },
           ].map(g => (
             <div key={g.l} style={{ fontFamily: 'monospace' }}>
               <div style={{ fontSize: 8, color: C.label }}>{g.l}</div>
-              <div style={{ fontSize: 11, color: g.ok ? C.green : C.yellow }}>
-                {g.ok ? '✓ ' : '○ '}{g.v}
-                {g.tgt && <span style={{ color: C.dim, fontSize: 9 }}> / {g.tgt}</span>}
-              </div>
+              <div style={{ fontSize: 11, color: g.c, fontWeight: 700 }}>{g.v}</div>
             </div>
           ))}
         </div>
@@ -350,24 +342,60 @@ function RiskPanel({ risk }: { risk: RiskState }) {
 
 // ── Position card ─────────────────────────────────────────────────────────
 function PositionRow({ pos }: { pos: Position }) {
-  const pnl = pos.pnl ?? 0;
+  const hasLive = pos.current_price != null && pos.current_price > 0;
+  const displayPnl = pos.pnl ?? pos.unrealized_pnl ?? 0;
+  const pnlLabel = pos.pnl != null ? '' : (hasLive ? 'UNRL' : 'POT');
+  const displayPnlValue = pos.pnl != null ? displayPnl : (hasLive ? displayPnl : pos.potential_win);
+  const pnlColor = displayPnlValue >= 0 ? C.green : C.red;
+
+  // Time remaining
+  const trMin = pos.time_remaining_min;
+  const timeStr = trMin != null
+    ? (trMin <= 0 ? 'EXPIRED' : trMin < 1 ? `${Math.round(trMin * 60)}s` : `${Math.round(trMin)}m`)
+    : null;
+  const timeColor = trMin != null ? (trMin <= 0 ? C.red : trMin < 2 ? C.yellow : C.greenDim) : C.dim;
+
   return (
     <div style={{ padding: '8px 10px', borderBottom: `1px solid ${C.border2}`, fontFamily: 'monospace' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+      {/* Row 1: Question + P&L */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
         <span style={{ fontSize: 11, color: C.white, flex: 1, marginRight: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {pos.asset && <span style={{ color: C.cyan, marginRight: 6 }}>{pos.asset}</span>}
           {pos.market_question}
         </span>
-        <span style={{ fontSize: 12, fontWeight: 700, color: pnl >= 0 ? C.green : C.red, flexShrink: 0 }}>
-          {fmt2(pnl)}
+        <span style={{ fontSize: 12, fontWeight: 700, color: pnlColor, flexShrink: 0 }}>
+          {pnlLabel && <span style={{ fontSize: 7, color: C.label, marginRight: 3 }}>{pnlLabel}</span>}
+          {fmt2(displayPnlValue)}
         </span>
       </div>
-      <div style={{ display: 'flex', gap: 10 }}>
+
+      {/* Row 2: Tags */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
         <span style={{ fontSize: 9, padding: '1px 6px', border: `1px solid ${pos.direction === 'YES' ? C.green : C.red}`, color: pos.direction === 'YES' ? C.green : C.red }}>{pos.direction}</span>
         {pos.intel_aligned && <span style={{ fontSize: 9, padding: '1px 6px', border: `1px solid ${C.cyan}`, color: C.cyan }}>⚡ INTEL</span>}
-        <span style={{ fontSize: 9, color: C.label }}>mkt {pct(pos.p_market)}</span>
-        <span style={{ fontSize: 9, color: C.text }}>model {pct(pos.p_model)}</span>
         <span style={{ fontSize: 9, color: '#8b5cf6' }}>edge {(pos.edge * 100).toFixed(0)}¢</span>
+        {timeStr && (
+          <span style={{ fontSize: 9, padding: '1px 6px', border: `1px solid ${timeColor}`, color: timeColor }}>
+            ⏱ {timeStr}
+          </span>
+        )}
         <span style={{ fontSize: 9, color: C.dim, marginLeft: 'auto' }}>{timeAgo(pos.opened_at)}</span>
+      </div>
+
+      {/* Row 3: Trade details grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 4 }}>
+        {[
+          { l: 'SIZE',    v: `$${pos.bet_size.toFixed(2)}`, c: C.text },
+          { l: 'ENTRY',   v: `${(pos.fill_price * 100).toFixed(1)}¢`, c: C.text },
+          { l: 'CURRENT', v: hasLive ? `${(pos.current_price! * 100).toFixed(1)}¢` : '--', c: hasLive ? (pos.current_price! > pos.fill_price ? C.green : pos.current_price! < pos.fill_price ? C.red : C.text) : C.dim },
+          { l: 'SHARES',  v: pos.shares.toFixed(1), c: C.text },
+          { l: 'IF WIN',  v: `+${pos.potential_win.toFixed(2)}`, c: C.greenDim },
+        ].map(d => (
+          <div key={d.l}>
+            <div style={{ fontSize: 7, color: C.label, letterSpacing: '0.08em' }}>{d.l}</div>
+            <div style={{ fontSize: 10, color: d.c, fontWeight: 600 }}>{d.v}</div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -584,11 +612,11 @@ export default function PredictPage() {
           <Panel title="Risk Limits">
             {[
               ['Max position',  '5% bankroll'],
-              ['Max category',  '20% bankroll'],
-              ['Max deployed',  '40% bankroll'],
-              ['Daily loss',    '8% → pause'],
-              ['Drawdown',      '15% → pause'],
-              ['Min edge',      '4¢'],
+              ['Max category',  '50% bankroll'],
+              ['Max deployed',  '60% bankroll'],
+              ['Daily loss',    '25% → pause'],
+              ['Drawdown',      '30% → pause'],
+              ['Min edge',      '6¢'],
             ].map(([l, v]) => (
               <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 8px', borderBottom: `1px solid ${C.border2}`, fontSize: 10 }}>
                 <span style={{ color: C.label }}>{l}</span>
@@ -753,7 +781,7 @@ export default function PredictPage() {
 
         {/* ── RIGHT: phase gate + stats ── */}
         <div style={{ borderLeft: `1px solid ${C.border}`, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 0 }}>
-          <PhaseGatePanel gate={gate} />
+          <TradingStatsPanel gate={gate} perf={perf} />
 
           {/* Polymarket status */}
           <Panel title="Polymarket">
