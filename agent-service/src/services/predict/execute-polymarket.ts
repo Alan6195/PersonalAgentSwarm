@@ -94,6 +94,7 @@ export async function executePolymarketTrade(
     expectedReturn: market.expectedRet,
     pModel: pForDirection,
     momentumStrength: market.momentumStrength,
+    intelStrength: market.intelSentiment != null ? Math.abs(market.intelSentiment) : undefined,
   };
 
   const riskCheck = await validateTrade(candidate, bankroll);

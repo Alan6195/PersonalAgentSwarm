@@ -13,6 +13,7 @@ import { checkEdgeCandidateNotification } from './telegram';
 import { resetDailyRisk } from './risk-gate';
 import { runWeeklyReview } from './learn';
 import { priceFeed } from './price-feed';
+import { getIntelSummary } from './intel-signal';
 import { query, queryOne } from '../../db';
 import { config, isPolyDryRun } from '../../config';
 
@@ -222,18 +223,33 @@ export async function handlePolymarketScan(taskId: number): Promise<string> {
     return 'POLYMARKET_API_KEY not configured. Scan skipped.';
   }
 
-  // Momentum gate: only scan when at least one asset shows meaningful momentum.
-  // Flat markets (all neutral) have no edge — scanning them wastes API calls
-  // and produces trades with thin margins that lose to taker fees.
-  // This gate serves both paths: cron (*/15 fallback) and momentum watcher trigger.
+  // Scan trigger: require either price momentum OR strong intel signals.
+  // Price momentum: at least one asset with momentumStrength > 0.2
+  // Intel signals: at least one asset with strong bearish or bullish signal (>= 0.5)
+  // This lets intel-driven trades fire even in flat markets (e.g., macro bearish
+  // news shifts the Bayesian prior, creating edge on NO bets without price movement).
   const signals = ['BTC', 'ETH', 'SOL', 'XRP'].map(a => priceFeed.getSignal(a));
   const hasAnyMomentum = signals.some(s =>
-    s && s.momentum !== 'neutral' && s.momentumStrength > 0.3
+    s && s.momentum !== 'neutral' && s.momentumStrength > 0.2
   );
 
+  // Check for strong intel signals (bearish or bullish >= 0.5 strength)
+  let hasStrongIntel = false;
   if (!hasAnyMomentum) {
-    console.log('[PolyScan] Skipped — all assets neutral, no momentum signal');
-    return 'Scan skipped — no momentum signal. All assets neutral.';
+    const assets = ['BTC', 'ETH', 'SOL', 'XRP'];
+    for (const asset of assets) {
+      const intel = await getIntelSummary(asset);
+      if (intel && (intel.bearishStrength >= 0.5 || intel.bullishStrength >= 0.5)) {
+        hasStrongIntel = true;
+        console.log(`[PolyScan] Intel trigger: ${asset} has ${intel.bearishStrength >= 0.5 ? 'bearish' : 'bullish'} signal (str=${Math.max(intel.bearishStrength, intel.bullishStrength).toFixed(2)})`);
+        break;
+      }
+    }
+  }
+
+  if (!hasAnyMomentum && !hasStrongIntel) {
+    console.log('[PolyScan] Skipped — no momentum and no strong intel signals');
+    return 'Scan skipped — no momentum signal and no strong intel. All quiet.';
   }
 
   // Update cooldown timestamp (prevents momentum watcher from re-triggering)

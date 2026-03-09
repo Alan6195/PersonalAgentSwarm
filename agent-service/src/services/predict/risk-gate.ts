@@ -12,7 +12,7 @@
  * - Pause all trading if drawdown from peak exceeds 15%
  * - Minimum $1 bet Manifold / $0.50 Polymarket (avoid dust positions)
  * - Minimum 4c edge Manifold / 9c net edge Polymarket (after taker fees)
- * - Polymarket: momentum confidence >= 0.4 (replaces VaR95 for binary 50/50 markets)
+ * - Polymarket: signal quality gate (momentum >= 0.35 OR intel >= 0.50 OR combined)
  * - Manifold: VaR95 > -0.10 (probability-space confidence check)
  */
 
@@ -73,6 +73,7 @@ export interface TradeCandidate {
   expectedReturn: number;
   pModel: number;
   momentumStrength?: number; // Polymarket: replaces VaR95 with momentum confidence gate
+  intelStrength?: number;    // Polymarket: max(bearish, bullish) from intel signals
 }
 
 /**
@@ -97,14 +98,17 @@ export async function validateTrade(candidate: TradeCandidate, bankroll: number)
   let signalQualityLabel: string;
 
   if (platform === 'polymarket') {
-    // Momentum confidence: only trade when price feed shows strong enough signal.
-    // momentumStrength 0.0-1.0 from price feed; require >= 0.35 to trade.
-    // Lowered from 0.40: the boundary caused near-misses (0.399 displayed as 0.40
-    // but rejected), and with intel signals providing additional context, a slightly
-    // lower threshold still filters out noise while catching real moves.
+    // Signal quality: accept either price momentum OR strong intel signals.
+    // Momentum alone: momentumStrength >= 0.35 from price feed
+    // Intel alone: strong bearish/bullish signal (>= 0.5) from X agent
+    // Combined: lower momentum threshold (>= 0.20) when intel confirms direction
     const ms = candidate.momentumStrength ?? 0;
-    signalQualityOk = ms >= 0.35;
-    signalQualityLabel = `momentum_confidence: ${ms.toFixed(2)} (min 0.35)`;
+    const is = candidate.intelStrength ?? 0;
+    const hasMomentum = ms >= 0.35;
+    const hasStrongIntel = is >= 0.5;
+    const hasCombined = ms >= 0.20 && is >= 0.3;
+    signalQualityOk = hasMomentum || hasStrongIntel || hasCombined;
+    signalQualityLabel = `momentum: ${ms.toFixed(2)}, intel: ${is.toFixed(2)} (need mom>=0.35 OR intel>=0.50 OR both>=0.20/0.30)`;
   } else {
     // VaR95: at 95% confidence, worst-case probability must be within 10pp of model
     const var95 = pModel - 1.645 * Math.sqrt(pModel * (1 - pModel));
