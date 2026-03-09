@@ -38,16 +38,17 @@ export const RISK_LIMITS: RiskLimits = {
   minBet: 1.00,
 };
 
-// Polymarket-specific overrides for $50 starting bankroll, 5-min markets
-// 15% Kelly (vs 25% Manifold) because 5-min markets are noisier
+// Polymarket-specific overrides for order flow trading on 5/15-min markets.
+// High-frequency small bets need looser limits than Manifold's long-horizon bets.
+// Positions resolve every 5-15 minutes, so exposure turns over rapidly.
 export const POLY_RISK_LIMITS: RiskLimits = {
-  maxPositionPct: 0.05,       // 5% = $2.50 max per trade
-  maxCategoryPct: 0.20,       // 20% = $10 max per category
-  maxTotalExposurePct: 0.40,  // 40% = $20 max deployed
-  dailyLossPausePct: 0.08,    // 8% = $4 daily loss pause
-  drawdownPausePct: 0.15,     // 15% = $7.50 drawdown pause
+  maxPositionPct: 0.05,       // 5% max per trade
+  maxCategoryPct: 0.50,       // 50% per category (all OFI trades are crypto; need room for 4 assets)
+  maxTotalExposurePct: 0.60,  // 60% max deployed (4 assets * 5% = 20% per cycle, leave headroom)
+  dailyLossPausePct: 0.25,    // 25% daily loss pause (many small bets need room to recover)
+  drawdownPausePct: 0.30,     // 30% drawdown from peak = hard stop
   minEdge: 0.06,              // 6c net edge (LMSR removed; edge from momentum + intel signals only)
-  minBet: 0.50,               // lower min for $50 bankroll
+  minBet: 0.50,               // lower min for small bankroll
 };
 
 /**

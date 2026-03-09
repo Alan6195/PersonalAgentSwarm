@@ -512,9 +512,9 @@ export default function PredictPage() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 14px', background: '#00050000', borderBottom: `1px solid ${C.border}`, flexWrap: 'wrap' }}>
         <span style={{ color: C.green, fontWeight: 700, fontSize: 13, letterSpacing: '0.08em' }}>◈ PREDICT_AGENT</span>
         {[
-          { label: gate.phase2Unlocked ? '⚡ LIVE' : 'PAPER', color: gate.phase2Unlocked ? C.green : C.yellow },
-          { label: 'LMSR + KELLY', color: C.cyan },
-          { label: 'v1.0.0', color: C.greenDim },
+          { label: p.dryRun ? 'DRY RUN' : '⚡ LIVE USDC', color: p.dryRun ? C.yellow : C.green },
+          { label: 'ORDER FLOW', color: C.cyan },
+          { label: 'v1.1.0', color: C.greenDim },
         ].map(t => (
           <span key={t.label} style={{ padding: '1px 7px', fontSize: 9, border: `1px solid ${t.color}`, color: t.color, letterSpacing: '0.08em' }}>{t.label}</span>
         ))}

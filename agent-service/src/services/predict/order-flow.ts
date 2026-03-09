@@ -90,6 +90,7 @@ class OrderFlowService {
   private markets: Map<string, ActiveMarket> = new Map();    // key: conditionId
   private tokenToMarket: Map<string, string> = new Map();    // assetId -> conditionId
   private pendingEntries: Map<string, OrderFlowSignal> = new Map(); // conditionId -> signal
+  private recentlySignaled: Set<string> = new Set(); // next-market conditionIds already signaled (dedup)
   private reconnectTimer: NodeJS.Timeout | null = null;
   private signalCheckTimer: NodeJS.Timeout | null = null;
   private onSignal: ((signal: OrderFlowSignal) => void) | null = null;
@@ -358,24 +359,37 @@ class OrderFlowService {
           // Find the NEXT window for this asset (same asset, endTime > now, closest)
           const nextMarket = this.findNextWindow(market.asset, now);
           if (nextMarket) {
-            // Build signal with the NEXT market's identifiers but current OFI data
-            const tradeSignal: OrderFlowSignal = {
-              ...freshSignal,
-              conditionId: nextMarket.conditionId,
-              question: nextMarket.question,
-              windowMinutes: nextMarket.windowMinutes,
-              windowEnd: nextMarket.endTime,
-              minutesUntilWindowEnd: (nextMarket.endTime - now) / 60_000,
-              midPrice: nextMarket.midPrice,
-              yesTokenId: nextMarket.yesTokenId,
-              noTokenId: nextMarket.noTokenId,
-            };
-            console.log(
-              `[OrderFlow] NEW_WINDOW CONFIRMED: ${market.asset} ${freshSignal.entryDirection} ` +
-              `OFI60=${freshSignal.ofi60s.toFixed(3)} str=${freshSignal.signalStrength.toFixed(2)} ` +
-              `-> trading next window: "${nextMarket.question.substring(0, 50)}"`
-            );
-            this.onSignal?.(tradeSignal);
+            // Dedup: if multiple expiring windows (e.g., 5m + 15m ending at same time)
+            // both find the same next market, only signal once.
+            if (this.recentlySignaled.has(nextMarket.conditionId)) {
+              console.log(
+                `[OrderFlow] NEW_WINDOW DEDUP: ${market.asset} ${freshSignal.entryDirection} ` +
+                `-> "${nextMarket.question.substring(0, 50)}" already signaled`
+              );
+            } else {
+              this.recentlySignaled.add(nextMarket.conditionId);
+              // Auto-clear after 2 minutes (well past the 60s NEW_WINDOW check)
+              setTimeout(() => this.recentlySignaled.delete(nextMarket.conditionId), 120_000);
+
+              // Build signal with the NEXT market's identifiers but current OFI data
+              const tradeSignal: OrderFlowSignal = {
+                ...freshSignal,
+                conditionId: nextMarket.conditionId,
+                question: nextMarket.question,
+                windowMinutes: nextMarket.windowMinutes,
+                windowEnd: nextMarket.endTime,
+                minutesUntilWindowEnd: (nextMarket.endTime - now) / 60_000,
+                midPrice: nextMarket.midPrice,
+                yesTokenId: nextMarket.yesTokenId,
+                noTokenId: nextMarket.noTokenId,
+              };
+              console.log(
+                `[OrderFlow] NEW_WINDOW CONFIRMED: ${market.asset} ${freshSignal.entryDirection} ` +
+                `OFI60=${freshSignal.ofi60s.toFixed(3)} str=${freshSignal.signalStrength.toFixed(2)} ` +
+                `-> trading next window: "${nextMarket.question.substring(0, 50)}"`
+              );
+              this.onSignal?.(tradeSignal);
+            }
           } else {
             console.log(
               `[OrderFlow] NEW_WINDOW CONFIRMED but no next window found for ${market.asset}`
