@@ -599,7 +599,12 @@ async function placePolymarketOrder(
     const positionId = rows[0]?.id;
 
     // Update risk state
-    await recordTradeOpened('polymarket', amount, bankroll);
+    try {
+      await recordTradeOpened('polymarket', amount, bankroll);
+      console.log(`[PolyExec] Risk state updated: +$${amount.toFixed(2)} exposure`);
+    } catch (riskErr: any) {
+      console.error(`[PolyExec] WARNING: recordTradeOpened failed: ${riskErr.message}. Position recorded but risk state not updated.`);
+    }
 
     // Mark intel signals as consumed
     if (market.intelSignalId) {
@@ -753,19 +758,46 @@ export async function reconcilePolymarketPositions(): Promise<{
       const winningToken = tokens.find((t: any) => t.winner === true);
 
       if (!winningToken) {
-        // Not yet resolved. Check if market is closed or expired
-        if (market.closed || (!market.accepting_orders && isMarketExpired(pos.question))) {
-          const minutesSinceExpiry = getMinutesSinceExpiry(pos.question);
-          if (minutesSinceExpiry > 60) {
-            // Force-close if unresolved 60+ minutes after expiry
-            console.warn(`[PolyResolve] Force-closing unresolved position (${minutesSinceExpiry.toFixed(0)}min post-expiry): ${pos.question.substring(0, 50)}`);
-            await closePosition(pos.id, 'closed_loss', -parseFloat(pos.bet_size), 'Force-closed: unresolved 60+ min past expiry');
+        // Not formally resolved on-chain yet.
+        // Check for "soft resolution" via price: if market expired AND one token
+        // price >= 0.85, treat that outcome as the winner. Polymarket's oracle can
+        // take hours to formally resolve 5-min markets, but prices settle quickly.
+        const minutesSinceExpiry = getMinutesSinceExpiry(pos.question);
+        if (minutesSinceExpiry > 2) {
+          // Market expired > 2 minutes ago. Check token prices for clear winner.
+          const priceWinner = tokens.find((t: any) => parseFloat(t.price || '0') >= 0.85);
+          if (priceWinner) {
+            console.log(`[PolyResolve] Soft-resolving via price: ${priceWinner.outcome} at $${parseFloat(priceWinner.price).toFixed(3)} (${minutesSinceExpiry.toFixed(0)}min post-expiry)`);
+            // Use same win/loss logic as formal resolution
+            const softOutcome = priceWinner.outcome;
+            const softWon = (pos.direction === 'YES' && softOutcome === 'Up') ||
+                            (pos.direction === 'NO' && softOutcome === 'Down');
+            const fillPrice = parseFloat(pos.fill_price) || 0.50;
+            const betSize = parseFloat(pos.bet_size);
+            const shares = betSize / fillPrice;
+            const pnl = softWon
+              ? shares * (1 - fillPrice) * 0.975
+              : -betSize;
+            const status = softWon ? 'closed_win' : 'closed_loss';
+            await closePosition(pos.id, status, pnl, `Soft-resolved via price: ${softOutcome} at $${parseFloat(priceWinner.price).toFixed(3)}`);
             result.closed++;
-            result.losses++;
-            result.totalPnl -= parseFloat(pos.bet_size);
-          } else {
-            console.log(`[PolyResolve] Awaiting resolution (${minutesSinceExpiry.toFixed(0)}min post-expiry): ${pos.question.substring(0, 50)}`);
+            if (softWon) result.wins++;
+            else result.losses++;
+            result.totalPnl += pnl;
+            console.log(`[PolyResolve] ${softWon ? 'WIN' : 'LOSS'}: ${pos.direction} on "${pos.question.substring(0, 50)}" -> ${softOutcome} (soft). P&L: $${pnl.toFixed(2)}`);
+            continue;
           }
+        }
+
+        // No price-based winner yet. Check for force-close at 60+ min
+        if (minutesSinceExpiry > 60) {
+          console.warn(`[PolyResolve] Force-closing unresolved position (${minutesSinceExpiry.toFixed(0)}min post-expiry): ${pos.question.substring(0, 50)}`);
+          await closePosition(pos.id, 'closed_loss', -parseFloat(pos.bet_size), 'Force-closed: unresolved 60+ min past expiry');
+          result.closed++;
+          result.losses++;
+          result.totalPnl -= parseFloat(pos.bet_size);
+        } else if (minutesSinceExpiry > 0) {
+          console.log(`[PolyResolve] Awaiting resolution (${minutesSinceExpiry.toFixed(0)}min post-expiry): ${pos.question.substring(0, 50)}`);
         }
         continue;
       }
