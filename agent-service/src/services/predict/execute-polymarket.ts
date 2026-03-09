@@ -56,6 +56,8 @@ function getClobClient(): ClobClient {
   });
 
   // Initialize ClobClient with L2 credentials
+  // signatureType 0 = EOA: Phantom wallet signs and trades directly
+  // USDC must be in the EOA address, not the Polymarket proxy wallet
   _clobClient = new ClobClient(
     CLOB_HOST,
     CHAIN_ID,
@@ -65,10 +67,10 @@ function getClobClient(): ClobClient {
       secret: config.POLYMARKET_API_SECRET,
       passphrase: config.POLYMARKET_API_PASSPHRASE,
     },
-    1, // signatureType: 1 = POLY_PROXY (Phantom EOA signs, proxy wallet holds funds)
+    0, // EOA: signer IS the trader
   );
 
-  console.log('[PolyExec] CLOB client initialized with L2 auth');
+  console.log(`[PolyExec] CLOB client initialized: EOA=${account.address}, signatureType=EOA`);
   return _clobClient;
 }
 
