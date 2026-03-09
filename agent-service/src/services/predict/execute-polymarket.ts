@@ -584,7 +584,6 @@ async function placePolymarketOrder(
       market.reasoning,
       orderId,
     ];
-    console.log(`[PolyExec] DB insert params: pYes=${market.pYes}, pBayes=${market.pBayes}, edge=${market.edge}, kelly=${market.kellyFrac}, amount=${amount}, fillPrice=${fill.fillPrice}, score=${market.score}, expectedRet=${market.expectedRet}, intelSigId=${market.intelSignalId}, intelAligned=${market.intelAligned}`);
     const rows = await query<{ id: number }>(
       `INSERT INTO market_positions
        (platform, market_id, market_url, question, category, asset, direction,
@@ -858,10 +857,14 @@ async function closePosition(positionId: number, status: string, pnl: number, no
 
   // Update risk state
   const { recordTradeClosed, updateDailyRisk } = await import('./risk-gate');
-  const bankroll = 50; // TODO: get from config or DB
-  await recordTradeClosed('polymarket', betSize, bankroll).catch(() => {});
+  const bankroll = config.PREDICT_POLY_STARTING_BANKROLL;
+  await recordTradeClosed('polymarket', betSize, bankroll).catch((e: any) =>
+    console.error(`[PolyResolve] recordTradeClosed failed: ${e.message}`)
+  );
   if (pnl !== 0) {
-    await updateDailyRisk('polymarket', pnl, bankroll).catch(() => {});
+    await updateDailyRisk('polymarket', pnl, bankroll).catch((e: any) =>
+      console.error(`[PolyResolve] updateDailyRisk failed: ${e.message}`)
+    );
   }
 }
 
@@ -885,16 +888,30 @@ function getMinutesSinceExpiry(question: string): number {
   if (isPM && hours !== 12) hours += 12;
   if (!isPM && hours === 12) hours = 0;
 
-  // Convert ET to UTC (ET = UTC-4 during EDT, UTC-5 during EST)
-  // March is EDT (UTC-4)
+  // Convert ET to UTC dynamically (handles EDT/EST transitions automatically)
+  const etOffset = getETOffsetHours();
+
   const now = new Date();
-  const nowUTC = now.getTime();
-
-  // Build the expiry time in UTC
   const expiry = new Date(now);
-  expiry.setUTCHours(hours + 4, minutes, 0, 0); // EDT = UTC-4
+  expiry.setUTCHours(hours + etOffset, minutes, 0, 0);
 
-  return (nowUTC - expiry.getTime()) / 60000;
+  return (now.getTime() - expiry.getTime()) / 60000;
+}
+
+/**
+ * Get current ET offset from UTC in hours (4 for EDT, 5 for EST).
+ * Uses Node.js Intl API for automatic DST handling.
+ */
+function getETOffsetHours(): number {
+  const now = new Date();
+  const etHour = parseInt(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour: 'numeric',
+      hour12: false,
+    }).format(now)
+  );
+  return ((now.getUTCHours() - etHour) + 24) % 24;
 }
 
 function sleep(ms: number): Promise<void> {
