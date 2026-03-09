@@ -8,9 +8,10 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { query, queryOne } from '../../db';
 import { getCurrentBankroll, getTradeStats, getManifoldBalance } from './execute';
-import { getUSDCBalance } from './execute-polymarket';
+import { getUSDCBalance, checkApprovals, ensureWalletReady } from './execute-polymarket';
 import { RISK_LIMITS } from './risk-gate';
 import { priceFeed } from './price-feed';
+import { runHealthChecks } from './health-monitor';
 import { config, isPolyDryRun, setConfigOverride, removeConfigOverride } from '../../config';
 
 let lastScanAt = 0;
@@ -59,9 +60,15 @@ export async function handlePredictCommand(
       case 'golive wait':
         await handleGoLiveWait(chatId, bot);
         break;
+      case 'health':
+        await sendHealthCheck(chatId, bot);
+        break;
+      case 'setup':
+        await runWalletSetup(chatId, bot);
+        break;
       default:
         await bot.sendMessage(chatId,
-          `Unknown subcommand: \`${sub}\`\n\nUsage:\n/predict status\n/predict positions\n/predict scan\n/predict pause\n/predict resume\n/predict gate\n/predict golive`,
+          `Unknown subcommand: \`${sub}\`\n\nUsage:\n/predict status\n/predict positions\n/predict scan\n/predict pause\n/predict resume\n/predict gate\n/predict golive\n/predict health\n/predict setup`,
           { parse_mode: 'Markdown' }
         );
     }
@@ -390,4 +397,72 @@ export function checkEdgeCandidateNotification(
       'Send /predict golive to review pre-flight checks.',
     ].join('\n'),
   };
+}
+
+// ── Health Check + Setup ────────────────────────────────────────────────
+
+async function sendHealthCheck(chatId: number, bot: TelegramBot): Promise<void> {
+  await bot.sendMessage(chatId, 'Running health checks...');
+
+  const health = await runHealthChecks();
+
+  let msg = '*PREDICT HEALTH MONITOR*\n\n';
+  for (const check of health.checks) {
+    const icon = check.status === 'ok' ? '\u2705' : check.status === 'warn' ? '\u26A0\uFE0F' : '\u{1F6A8}';
+    msg += `${icon} *${check.name}*: ${check.message}`;
+    if (check.autoHealed) msg += ' (auto-healed)';
+    msg += '\n';
+  }
+
+  msg += `\n${health.summary}`;
+
+  try {
+    await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
+  } catch {
+    await bot.sendMessage(chatId, msg);
+  }
+}
+
+async function runWalletSetup(chatId: number, bot: TelegramBot): Promise<void> {
+  await bot.sendMessage(chatId, 'Running wallet setup (checking balance, approvals)...');
+
+  // 1. Check current state
+  const approvals = await checkApprovals();
+  const usdcBalance = await getUSDCBalance();
+
+  let msg = '*WALLET SETUP*\n\n';
+  msg += `*Wallet*: ${config.POLYMARKET_WALLET_ADDRESS?.slice(0, 10)}...\n`;
+  msg += `*USDC.e balance*: $${usdcBalance?.toFixed(2) ?? 'unknown'}\n\n`;
+
+  msg += '*Approvals*:\n';
+  for (const [name, detail] of Object.entries(approvals.details)) {
+    const icon = detail.sufficient ? '\u2705' : '\u274C';
+    msg += `${icon} ${name}: $${detail.allowance > 1e12 ? 'unlimited' : detail.allowance.toFixed(2)}\n`;
+  }
+
+  if (approvals.approved) {
+    msg += '\n\u2705 All approvals in place. Ready to trade.';
+    try {
+      await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
+    } catch {
+      await bot.sendMessage(chatId, msg);
+    }
+    return;
+  }
+
+  // Try auto-setup
+  msg += '\nMissing approvals. Attempting auto-setup...';
+  try {
+    await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
+  } catch {
+    await bot.sendMessage(chatId, msg);
+  }
+
+  const result = await ensureWalletReady();
+
+  if (result.ready) {
+    await bot.sendMessage(chatId, `\u2705 ${result.message}`);
+  } else {
+    await bot.sendMessage(chatId, `\u274C ${result.message}`);
+  }
 }

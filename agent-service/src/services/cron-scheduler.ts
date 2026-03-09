@@ -569,6 +569,27 @@ async function runJob(job: CronJob): Promise<void> {
       return;
     }
 
+    // Predict Health Monitor: check subsystem health, auto-heal stale intel
+    if (job.name === 'Predict Health Monitor') {
+      console.log('[Cron] Running Predict Health Monitor');
+      const { runHealthChecks } = await import('./predict/health-monitor');
+      const health = await runHealthChecks();
+      const durationMs = Date.now() - startTime;
+
+      await query(`UPDATE cron_runs SET status = 'success', duration_ms = $1, output_summary = $2, completed_at = NOW() WHERE id = $3`, [durationMs, health.summary.substring(0, 2000), run.id]);
+      const nextRun = calculateNextRun(job.schedule);
+      await query(`UPDATE cron_jobs SET last_status = 'success', last_run_at = NOW(), next_run_at = $1, last_duration_ms = $2, run_count = run_count + 1, updated_at = NOW() WHERE id = $3`, [nextRun, durationMs, job.id]);
+      await taskManager.completeTask(task.id, { content: health.summary, tokensUsed: 0, costCents: 0, durationMs });
+
+      // Send Telegram alert only for warn/critical issues
+      if (health.alertMessage) {
+        await sendThrottledTelegram('predict-health', health.alertMessage);
+      }
+
+      console.log(`[Cron] Predict Health Monitor completed (${durationMs}ms): ${health.summary}`);
+      return;
+    }
+
     // X Agent Intel Scan: run intelligence scan + write shared_signals for predict
     if (job.name === 'X Agent Intel Scan') {
       console.log('[Cron] Running X Agent Intel Scan');

@@ -11,7 +11,7 @@
 
 import { ClobClient, Side, OrderType, type TickSize } from '@polymarket/clob-client';
 import { privateKeyToAccount } from 'viem/accounts';
-import { createWalletClient, http } from 'viem';
+import { createWalletClient, createPublicClient, http, parseAbi, maxUint256 } from 'viem';
 import { polygon } from 'viem/chains';
 import { config, isPolyDryRun } from '../../config';
 import { query } from '../../db';
@@ -20,6 +20,20 @@ import type { PolyCandidate } from './scan-polymarket';
 
 const CLOB_HOST = 'https://clob.polymarket.com';
 const CHAIN_ID = 137; // Polygon mainnet
+
+// Polymarket exchange contracts that need USDC.e approval
+const EXCHANGE_CONTRACTS = {
+  ctfExchange: '0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E' as `0x${string}`,
+  negRiskExchange: '0xC5d563A36AE78145C45a50134d48A1215220f80a' as `0x${string}`,
+  negRiskAdapter: '0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296' as `0x${string}`,
+};
+
+// ERC20 ABI for approval checks and transactions
+const ERC20_ABI = parseAbi([
+  'function allowance(address owner, address spender) view returns (uint256)',
+  'function approve(address spender, uint256 amount) returns (bool)',
+  'function balanceOf(address account) view returns (uint256)',
+]);
 
 export interface PolyTradeResult {
   success: boolean;
@@ -74,6 +88,167 @@ function getClobClient(): ClobClient {
   return _clobClient;
 }
 
+// Track whether approvals have been verified this session
+let _approvalsVerified = false;
+
+/**
+ * Check if USDC.e is approved for all Polymarket exchange contracts.
+ * Returns true if all approvals are sufficient, false if any are missing.
+ */
+export async function checkApprovals(): Promise<{
+  approved: boolean;
+  details: Record<string, { allowance: number; sufficient: boolean }>;
+}> {
+  if (!config.POLYGON_RPC_URL || !config.POLYMARKET_WALLET_ADDRESS) {
+    return { approved: false, details: {} };
+  }
+
+  const publicClient = createPublicClient({
+    chain: polygon,
+    transport: http(config.POLYGON_RPC_URL),
+  });
+
+  const usdcAddress = config.USDC_CONTRACT as `0x${string}`;
+  const walletAddress = config.POLYMARKET_WALLET_ADDRESS as `0x${string}`;
+  const details: Record<string, { allowance: number; sufficient: boolean }> = {};
+  let allApproved = true;
+
+  for (const [name, spender] of Object.entries(EXCHANGE_CONTRACTS)) {
+    try {
+      const allowance = await publicClient.readContract({
+        address: usdcAddress,
+        abi: ERC20_ABI,
+        functionName: 'allowance',
+        args: [walletAddress, spender],
+      });
+      const allowanceUsd = Number(allowance) / 1e6;
+      const sufficient = allowanceUsd > 1000; // > $1000 means unlimited or very high
+      details[name] = { allowance: allowanceUsd, sufficient };
+      if (!sufficient) allApproved = false;
+    } catch {
+      details[name] = { allowance: 0, sufficient: false };
+      allApproved = false;
+    }
+  }
+
+  return { approved: allApproved, details };
+}
+
+/**
+ * Approve USDC.e for all Polymarket exchange contracts.
+ * Requires MATIC for gas. Sets unlimited approval (max uint256).
+ * Returns true if all approvals succeeded.
+ */
+export async function approveUSDC(): Promise<{
+  success: boolean;
+  results: Record<string, { txHash?: string; error?: string }>;
+}> {
+  if (!config.POLYMARKET_WALLET_KEY || !config.POLYGON_RPC_URL) {
+    return { success: false, results: { error: { error: 'Wallet or RPC not configured' } } };
+  }
+
+  const account = privateKeyToAccount(config.POLYMARKET_WALLET_KEY as `0x${string}`);
+  const walletClient = createWalletClient({
+    account,
+    chain: polygon,
+    transport: http(config.POLYGON_RPC_URL),
+  });
+
+  const usdcAddress = config.USDC_CONTRACT as `0x${string}`;
+  const results: Record<string, { txHash?: string; error?: string }> = {};
+  let allSuccess = true;
+
+  for (const [name, spender] of Object.entries(EXCHANGE_CONTRACTS)) {
+    try {
+      console.log(`[PolySetup] Approving USDC.e for ${name} (${spender.slice(0, 10)}...)`);
+      const hash = await walletClient.writeContract({
+        address: usdcAddress,
+        abi: ERC20_ABI,
+        functionName: 'approve',
+        args: [spender, maxUint256],
+      });
+      results[name] = { txHash: hash };
+      console.log(`[PolySetup] Approval tx sent: ${hash}`);
+
+      // Wait a bit between transactions
+      await sleep(3000);
+    } catch (err: any) {
+      results[name] = { error: err.message?.substring(0, 200) };
+      allSuccess = false;
+      console.error(`[PolySetup] Approval failed for ${name}:`, err.message);
+    }
+  }
+
+  return { success: allSuccess, results };
+}
+
+/**
+ * Full wallet setup: check and approve USDC for trading.
+ * Call this before first trade or from /predict setup command.
+ */
+export async function ensureWalletReady(): Promise<{
+  ready: boolean;
+  message: string;
+}> {
+  // Check USDC.e balance
+  const balance = await getUSDCBalance();
+  if (balance === null || balance < 0.50) {
+    return {
+      ready: false,
+      message: `USDC.e balance too low: $${balance?.toFixed(2) ?? '0'}. Need USDC.e (bridged) in EOA wallet.`,
+    };
+  }
+
+  // Check gas balance
+  if (config.POLYGON_RPC_URL && config.POLYMARKET_WALLET_ADDRESS) {
+    try {
+      const res = await fetch(config.POLYGON_RPC_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: 1, method: 'eth_getBalance',
+          params: [config.POLYMARKET_WALLET_ADDRESS, 'latest'],
+        }),
+      });
+      const json = await res.json() as any;
+      const maticBalance = json.result ? parseInt(json.result, 16) / 1e18 : 0;
+      if (maticBalance < 0.005) {
+        return {
+          ready: false,
+          message: `MATIC balance too low: ${maticBalance.toFixed(6)}. Need >= 0.01 MATIC for approval transactions.`,
+        };
+      }
+    } catch { /* non-critical */ }
+  }
+
+  // Check approvals
+  const approvalCheck = await checkApprovals();
+  if (!approvalCheck.approved) {
+    // Try auto-approve
+    console.log('[PolySetup] Missing approvals, attempting auto-approve...');
+    const result = await approveUSDC();
+    if (!result.success) {
+      const failed = Object.entries(result.results)
+        .filter(([, v]) => v.error)
+        .map(([k, v]) => `${k}: ${v.error}`)
+        .join('; ');
+      return { ready: false, message: `Approval failed: ${failed}` };
+    }
+
+    // Wait for confirmations
+    await sleep(5000);
+
+    // Verify approvals
+    const recheck = await checkApprovals();
+    if (!recheck.approved) {
+      return { ready: false, message: 'Approvals sent but not confirmed. Try again in a minute.' };
+    }
+  }
+
+  _approvalsVerified = true;
+  return { ready: true, message: `Wallet ready. USDC.e: $${balance.toFixed(2)}` };
+}
+
 /**
  * Execute a trade on Polymarket (runs risk gate first)
  */
@@ -110,6 +285,15 @@ export async function executePolymarketTrade(
     console.log(`[PolyExec] DRY RUN: edge=${(market.edge * 100).toFixed(1)}c, kelly=${(market.kellyFrac * 100).toFixed(1)}%, pBayes=${market.pBayes.toFixed(4)}`);
 
     return { success: true, dryRun: true };
+  }
+
+  // Ensure wallet has approvals (one-time check per session)
+  if (!_approvalsVerified) {
+    const walletCheck = await ensureWalletReady();
+    if (!walletCheck.ready) {
+      console.error(`[PolyExec] Wallet not ready: ${walletCheck.message}`);
+      return { success: false, error: `Wallet setup: ${walletCheck.message}`, dryRun: false };
+    }
   }
 
   // Live execution via official CLOB client
