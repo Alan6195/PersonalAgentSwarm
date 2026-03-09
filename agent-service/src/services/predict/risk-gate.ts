@@ -283,29 +283,48 @@ interface DailyRisk {
   pause_reason: string | null;
 }
 
+// pg driver returns NUMERIC columns as strings. Parse them to avoid string concatenation bugs.
+function parseDailyRisk(row: any): DailyRisk {
+  return {
+    id: row.id,
+    date: row.date,
+    starting_bankroll: parseFloat(row.starting_bankroll) || 0,
+    current_bankroll: parseFloat(row.current_bankroll) || 0,
+    peak_bankroll: parseFloat(row.peak_bankroll) || 0,
+    daily_pnl: parseFloat(row.daily_pnl) || 0,
+    daily_loss: parseFloat(row.daily_loss) || 0,
+    trades_opened: parseInt(row.trades_opened) || 0,
+    trades_closed: parseInt(row.trades_closed) || 0,
+    current_exposure: parseFloat(row.current_exposure) || 0,
+    current_drawdown: parseFloat(row.current_drawdown) || 0,
+    trading_paused: row.trading_paused,
+    pause_reason: row.pause_reason,
+  };
+}
+
 async function getOrCreateDailyRisk(platform: string, bankroll: number): Promise<DailyRisk> {
   const todayStr = new Date().toISOString().split('T')[0];
 
-  let row = await queryOne<DailyRisk>(
+  let row = await queryOne<any>(
     `SELECT * FROM daily_risk_state WHERE date = $1 AND platform = $2`,
     [todayStr, platform]
   );
 
   if (!row) {
-    const rows = await query<DailyRisk>(
+    const rows = await query<any>(
       `INSERT INTO daily_risk_state (date, platform, starting_bankroll, current_bankroll, peak_bankroll)
        VALUES ($1, $2, $3, $3, $3)
        ON CONFLICT (date, platform) DO NOTHING
        RETURNING *`,
       [todayStr, platform, bankroll]
     );
-    row = rows[0] ?? await queryOne<DailyRisk>(
+    row = rows[0] ?? await queryOne<any>(
       `SELECT * FROM daily_risk_state WHERE date = $1 AND platform = $2`,
       [todayStr, platform]
     );
   }
 
-  return row!;
+  return parseDailyRisk(row);
 }
 
 async function getTotalOpenExposure(platform: string): Promise<number> {
