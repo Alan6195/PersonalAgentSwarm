@@ -267,11 +267,12 @@ async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
     }
 
     // Compute capped limit price relative to current mid
-    // YES: buy at currentMid + 0.02 (cap 0.65 to avoid overpaying in 50/50 markets)
-    // NO: buy NO token at (1 - currentMid) + 0.02, which means limit for YES view = currentMid - 0.02 (floor 0.35)
+    // YES: buy at currentMid + 0.04 (cap 0.65 to avoid overpaying in 50/50 markets)
+    // NO: buy NO token at (1 - currentMid) + 0.04
+    // +0.04 offset ensures we cross the spread during aggressive order flow
     const limitPriceOverride = signal.entryDirection === 'YES'
-      ? Math.min(currentMid + 0.02, 0.65)
-      : Math.min((1 - currentMid) + 0.02, 0.65);
+      ? Math.min(currentMid + 0.04, 0.65)
+      : Math.min((1 - currentMid) + 0.04, 0.65);
 
     // Build a PolyCandidate-like object for the existing execution pipeline
     const candidate = {
