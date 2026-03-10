@@ -431,14 +431,17 @@ class OrderFlowService {
 
   /**
    * Find the next active window for a given asset (same asset, endTime > now).
-   * Returns the closest upcoming window, or null if none found.
+   * Requires at least minMinutesLeft remaining for the trade to be actionable.
+   * Prefers the window with the MOST time remaining (longer windows = better fills
+   * per trade data analysis showing 15+ min = 78% WR vs <15 min = 0-29% WR).
    */
-  private findNextWindow(asset: string, now: number): ActiveMarket | null {
+  private findNextWindow(asset: string, now: number, minMinutesLeft: number = 10): ActiveMarket | null {
     let best: ActiveMarket | null = null;
-    let bestEnd = Infinity;
+    let bestEnd = 0; // prefer LONGEST remaining time (most time = highest WR)
 
     for (const [, m] of this.markets) {
-      if (m.asset === asset && m.endTime > now && m.endTime < bestEnd) {
+      const minutesLeft = (m.endTime - now) / 60_000;
+      if (m.asset === asset && m.endTime > now && minutesLeft >= minMinutesLeft && m.endTime > bestEnd) {
         best = m;
         bestEnd = m.endTime;
       }
