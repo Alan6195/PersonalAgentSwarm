@@ -1185,6 +1185,15 @@ export async function syncBankrollToWallet(): Promise<number | null> {
     return null;
   }
 
+  // Add back open position exposure: USDC locked in CLOB orders isn't in wallet
+  // but is still part of the bankroll
+  const openExposure = await queryOne<{ total: string }>(
+    `SELECT COALESCE(SUM(bet_size), 0) as total FROM market_positions WHERE platform = 'polymarket' AND status = 'open'`,
+    []
+  );
+  const lockedInOrders = parseFloat(openExposure?.total || '0');
+  const effectiveBankroll = balance + lockedInOrders;
+
   const todayStr = new Date().toISOString().split('T')[0];
   const existing = await queryOne<any>(
     `SELECT id, current_bankroll FROM daily_risk_state WHERE date = $1 AND platform = 'polymarket'`,
@@ -1193,27 +1202,26 @@ export async function syncBankrollToWallet(): Promise<number | null> {
 
   if (existing) {
     const oldBankroll = parseFloat(existing.current_bankroll);
-    if (Math.abs(oldBankroll - balance) > 0.01) {
-      console.log(`[PolySync] Bankroll drift: tracked=$${oldBankroll.toFixed(2)}, actual=$${balance.toFixed(2)}. Syncing.`);
+    if (Math.abs(oldBankroll - effectiveBankroll) > 0.01) {
+      console.log(`[PolySync] Bankroll sync: wallet=$${balance.toFixed(2)} + open=$${lockedInOrders.toFixed(2)} = $${effectiveBankroll.toFixed(2)} (was $${oldBankroll.toFixed(2)})`);
       await query(
         `UPDATE daily_risk_state
          SET current_bankroll = $1, peak_bankroll = GREATEST(peak_bankroll, $1), updated_at = NOW()
          WHERE id = $2`,
-        [balance, existing.id]
+        [effectiveBankroll, existing.id]
       );
     }
   } else {
-    // Create today's risk state with actual balance
     await query(
       `INSERT INTO daily_risk_state (date, platform, starting_bankroll, current_bankroll, peak_bankroll)
        VALUES ($1, 'polymarket', $2, $2, $2)
        ON CONFLICT (date, platform) DO UPDATE SET current_bankroll = $2, peak_bankroll = GREATEST(daily_risk_state.peak_bankroll, $2)`,
-      [todayStr, balance]
+      [todayStr, effectiveBankroll]
     );
   }
 
-  console.log(`[PolySync] Bankroll synced to wallet: $${balance.toFixed(2)}`);
-  return balance;
+  console.log(`[PolySync] Bankroll synced: $${effectiveBankroll.toFixed(2)} (wallet=$${balance.toFixed(2)}, locked=$${lockedInOrders.toFixed(2)})`);
+  return effectiveBankroll;
 }
 
 function sleep(ms: number): Promise<void> {

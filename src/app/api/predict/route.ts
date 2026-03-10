@@ -27,24 +27,26 @@ export async function GET(request: Request) {
 
 // Helper to get platform stats (bankroll, winRate, trades, pnl, etc.)
 async function getPlatformStats(platform: string) {
-  // Latest equity snapshot for bankroll
-  const equityRows = await query(
-    `SELECT bankroll as balance FROM equity_snapshots
-     WHERE platform = $1
-     ORDER BY snapshot_at DESC LIMIT 1`,
+  // Bankroll: use daily_risk_state as source of truth (tracks full accounting including
+  // open position value). equity_snapshots reflects wallet balance which excludes funds
+  // locked in CLOB orders, so it under-reports when positions are open.
+  const riskBankroll = await query(
+    `SELECT current_bankroll FROM daily_risk_state WHERE platform = $1 ORDER BY date DESC LIMIT 1`,
     [platform]
   );
   let bankroll: number;
-  if (equityRows.length > 0) {
-    bankroll = parseFloat((equityRows[0] as any).balance) || 0;
+  if (riskBankroll.length > 0) {
+    bankroll = parseFloat((riskBankroll[0] as any).current_bankroll) || 0;
   } else {
-    // Fallback: try daily_risk_state, then env default
-    const riskFallback = await query(
-      `SELECT current_bankroll FROM daily_risk_state WHERE platform = $1 ORDER BY date DESC LIMIT 1`,
+    // Fallback: equity snapshot, then default
+    const equityRows = await query(
+      `SELECT bankroll as balance FROM equity_snapshots
+       WHERE platform = $1
+       ORDER BY snapshot_at DESC LIMIT 1`,
       [platform]
     );
-    if (riskFallback.length > 0) {
-      bankroll = parseFloat((riskFallback[0] as any).current_bankroll) || 0;
+    if (equityRows.length > 0) {
+      bankroll = parseFloat((equityRows[0] as any).balance) || 0;
     } else {
       bankroll = platform === 'manifold' ? 1000 : 50;
     }
