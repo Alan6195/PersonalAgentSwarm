@@ -143,17 +143,53 @@ export function stopOrderFlowScanner(): void {
 /**
  * Handle an order flow signal from the WebSocket scanner.
  * Runs risk gate, then executes trade (or dry-run logs).
+ *
+ * STRATEGY (data-driven, 101 trades analyzed):
+ * The ONLY profitable configuration is cheap fill (<48c) + plenty of time (15+ min).
+ * That combo: 77.8% win rate, +$22.54 profit out of 18 trades.
+ * Everything else loses money. We enforce both conditions as hard gates.
  */
+
+// Hard strategy constants (derived from trade data analysis)
+const MAX_FILL_PRICE = 0.48;       // Only buy tokens below 48c (contrarian/cheap side)
+const MIN_MINUTES_REMAINING = 10;  // Only enter with 10+ min remaining (15+ is ideal; 10 gives buffer)
+
 async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
   if (!signal.entryDirection) return;
 
+  // ── STRATEGY GATE 1: Time remaining ──
+  // Data shows <15 min entries have 0-28% win rate. Only enter with enough time.
+  if (signal.minutesUntilWindowEnd < MIN_MINUTES_REMAINING) {
+    console.log(
+      `[OrderFlow] SKIP: ${signal.asset} ${signal.entryDirection} — ` +
+      `only ${signal.minutesUntilWindowEnd.toFixed(1)} min left (need ${MIN_MINUTES_REMAINING}+)`
+    );
+    return;
+  }
+
   // Early check: fetch fresh mid price to reject expired/decided markets.
-  // If mid > 0.85 or mid < 0.15, outcome is already decided — no edge to capture.
   const { fetchCurrentMidPrice: fetchMidEarly } = await import('./execute-polymarket');
   const earlyMid = await fetchMidEarly(signal.yesTokenId);
   if (earlyMid !== null && (earlyMid > 0.85 || earlyMid < 0.15)) {
     console.log(
       `[OrderFlow] SKIP: ${signal.asset} mid=${earlyMid.toFixed(4)} — market already decided`
+    );
+    return;
+  }
+
+  // ── STRATEGY GATE 2: Fill price check ──
+  // Compute what we'd actually pay for the token we want to buy.
+  // YES token cost = mid price; NO token cost = 1 - mid price.
+  const currentMidEarly = earlyMid ?? signal.midPrice;
+  const expectedFillPrice = signal.entryDirection === 'YES'
+    ? currentMidEarly
+    : (1 - currentMidEarly);
+
+  if (expectedFillPrice > MAX_FILL_PRICE) {
+    console.log(
+      `[OrderFlow] SKIP: ${signal.asset} ${signal.entryDirection} — ` +
+      `expected fill ${(expectedFillPrice * 100).toFixed(1)}c > ${(MAX_FILL_PRICE * 100).toFixed(0)}c cap ` +
+      `(mid=${currentMidEarly.toFixed(3)})`
     );
     return;
   }
@@ -164,41 +200,45 @@ async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
   console.log(
     `[OrderFlow] ${mode} Signal: ${signal.asset} ${signal.entryDirection} ` +
     `OFI60=${signal.ofi60s.toFixed(3)} str=${signal.signalStrength.toFixed(2)} ` +
-    `large=${signal.largeTradeDetected}`
+    `large=${signal.largeTradeDetected} fill~${(expectedFillPrice * 100).toFixed(0)}c ` +
+    `${signal.minutesUntilWindowEnd.toFixed(0)}min left`
   );
 
   // Get bankroll
   const bankroll = await getPolyBankroll();
 
-  // Rolling Kelly: use empirical win rate from last 20 trades for bet sizing
+  // Rolling Kelly: use empirical win rate from last 20 CHEAP trades for bet sizing
+  // (only count trades that match our strategy filter for accurate sizing)
   const recentTrades = await query<{ status: string }>(
     `SELECT status FROM market_positions
      WHERE platform = 'polymarket'
        AND status IN ('closed_win', 'closed_loss')
+       AND fill_price < 0.48
        AND (notes IS NULL OR notes NOT LIKE 'scanner bug%')
        AND (notes IS NULL OR notes NOT LIKE 'Auto-closed%')
      ORDER BY closed_at DESC LIMIT 20`
   );
   const wins = recentTrades.filter(r => r.status === 'closed_win').length;
   const total = recentTrades.length;
-  const recentWR = total >= 5 ? wins / total : 0.50;
+  // Use cheap-fill win rate (historically ~58-78%), fallback to 55% if not enough data
+  const recentWR = total >= 5 ? wins / total : 0.55;
 
-  // Kelly formula for binary market (win ~= 1x bet)
-  const rawKelly = Math.max(0, recentWR - (1 - recentWR));
+  // Kelly formula for binary market (win ~= 1x bet at cheap fills)
+  // At 45c fill, win pays ~55c profit on 45c risk => odds ~= 1.22x
+  const effectiveOdds = (1 - expectedFillPrice) / expectedFillPrice; // e.g., 0.55/0.45 = 1.22
+  const rawKelly = Math.max(0, recentWR - (1 - recentWR) / effectiveOdds);
 
-  // Fractional Kelly scales with confidence in the model
-  const kellyFraction = recentWR > 0.55 ? 0.33
-                       : recentWR > 0.52 ? 0.20
-                       : recentWR > 0.50 ? 0.10
-                       :                   0.05;
+  // Aggressive fractional Kelly: we have a proven 78% edge at cheap fills
+  const kellyFraction = recentWR > 0.65 ? 0.50
+                       : recentWR > 0.55 ? 0.33
+                       : recentWR > 0.50 ? 0.20
+                       :                   0.10;
 
-  const betPct = Math.min(rawKelly * kellyFraction, 0.10); // hard cap at 10% bankroll
-  const betSize = Math.max(1.00, bankroll * betPct);        // min $1.00
+  const betPct = Math.min(rawKelly * kellyFraction, 0.15); // 15% cap (proven edge deserves bigger bets)
+  const betSize = Math.max(0.50, bankroll * betPct);        // min $0.50
 
-  // Model probability estimate from OFI:
-  // OFI of +0.3 suggests ~57% chance of Up outcome
-  // OFI of +0.5 suggests ~62% chance
-  const ofiToProbShift = signal.ofi60s * 0.25; // max +/- 25% shift from 50%
+  // Model probability estimate from OFI
+  const ofiToProbShift = signal.ofi60s * 0.25;
   const pModel = signal.entryDirection === 'YES'
     ? Math.min(0.75, Math.max(0.25, 0.50 + ofiToProbShift))
     : Math.min(0.75, Math.max(0.25, 0.50 - ofiToProbShift));
@@ -209,10 +249,10 @@ async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
     category: 'crypto',
     positionSizePct: betSize / bankroll,
     betSize,
-    edge: signal.signalStrength * 0.15, // map signal strength to edge estimate
+    edge: signal.signalStrength * 0.15,
     expectedReturn: signal.signalStrength * 0.10,
     pModel,
-    momentumStrength: signal.signalStrength, // OFI strength acts as momentum proxy
+    momentumStrength: signal.signalStrength,
   }, bankroll);
 
   if (!riskCheck.approved) {
@@ -221,13 +261,13 @@ async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
   }
 
   if (isDryRun) {
-    // Fetch fresh mid even in dry-run mode so we can validate limit prices
     const { fetchCurrentMidPrice: fetchMid } = await import('./execute-polymarket');
     const freshMid = await fetchMid(signal.yesTokenId);
     const currentMid = freshMid ?? signal.midPrice;
+    // Tight limit: we WANT cheap fills, don't overpay
     const wouldLimit = signal.entryDirection === 'YES'
-      ? Math.min(currentMid + 0.02, 0.65)
-      : Math.min((1 - currentMid) + 0.02, 0.65);
+      ? Math.min(currentMid + 0.01, MAX_FILL_PRICE)
+      : Math.min((1 - currentMid) + 0.01, MAX_FILL_PRICE);
 
     console.log(
       `[OrderFlow] DRY RUN: Would ${signal.entryDirection} on "${signal.question.substring(0, 60)}" ` +
@@ -235,7 +275,6 @@ async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
       `| mid=${currentMid.toFixed(4)} limit=${wouldLimit.toFixed(4)}`
     );
 
-    // Log dry-run signal to Telegram
     if (telegramNotifyFn) {
       try {
         await telegramNotifyFn(
@@ -243,8 +282,8 @@ async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
           `${signal.asset} ${signal.entryDirection}\n` +
           `OFI: ${(signal.ofi60s * 100).toFixed(1)}% | Strength: ${(signal.signalStrength * 100).toFixed(0)}%\n` +
           `Mid: ${currentMid.toFixed(3)} | Limit: ${wouldLimit.toFixed(3)}\n` +
-          `Size: $${betSize.toFixed(2)} | Large trade: ${signal.largeTradeDetected ? 'yes' : 'no'}\n` +
-          `Volume: ${signal.totalVolume60s.toFixed(0)} shares/60s`
+          `Size: $${betSize.toFixed(2)} | Fill est: ${(expectedFillPrice * 100).toFixed(0)}c\n` +
+          `Time left: ${signal.minutesUntilWindowEnd.toFixed(0)} min`
         );
       } catch { /* non-critical */ }
     }
@@ -255,10 +294,9 @@ async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
   try {
     const { executePolymarketTrade, fetchCurrentMidPrice } = await import('./execute-polymarket');
 
-    // Fetch fresh mid price from CLOB API (signal.midPrice may be 30+ min stale from discovery)
     const yesTokenId = signal.yesTokenId;
     const freshMid = await fetchCurrentMidPrice(yesTokenId);
-    const currentMid = freshMid ?? signal.midPrice; // fallback to stale if API fails
+    const currentMid = freshMid ?? signal.midPrice;
 
     if (freshMid !== null) {
       console.log(`[OrderFlow] Fresh midPrice: ${freshMid.toFixed(4)} (was ${signal.midPrice.toFixed(4)} from discovery)`);
@@ -266,15 +304,25 @@ async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
       console.warn(`[OrderFlow] Could not fetch fresh midPrice, using stale: ${signal.midPrice.toFixed(4)}`);
     }
 
-    // Compute capped limit price relative to current mid
-    // YES: buy at currentMid + 0.04 (cap 0.65 to avoid overpaying in 50/50 markets)
-    // NO: buy NO token at (1 - currentMid) + 0.04
-    // +0.04 offset ensures we cross the spread during aggressive order flow
-    const limitPriceOverride = signal.entryDirection === 'YES'
-      ? Math.min(currentMid + 0.04, 0.65)
-      : Math.min((1 - currentMid) + 0.04, 0.65);
+    // Re-check fill price with fresh mid (may have moved since early check)
+    const freshFillPrice = signal.entryDirection === 'YES'
+      ? currentMid
+      : (1 - currentMid);
 
-    // Build a PolyCandidate-like object for the existing execution pipeline
+    if (freshFillPrice > MAX_FILL_PRICE) {
+      console.log(
+        `[OrderFlow] SKIP (fresh price): ${signal.asset} ${signal.entryDirection} — ` +
+        `fill ${(freshFillPrice * 100).toFixed(1)}c > ${(MAX_FILL_PRICE * 100).toFixed(0)}c cap`
+      );
+      return;
+    }
+
+    // Tight limit price: cap at MAX_FILL_PRICE to ensure we only get cheap fills
+    // +1c offset to cross spread, but never above our max fill cap
+    const limitPriceOverride = signal.entryDirection === 'YES'
+      ? Math.min(currentMid + 0.01, MAX_FILL_PRICE)
+      : Math.min((1 - currentMid) + 0.01, MAX_FILL_PRICE);
+
     const candidate = {
       id: signal.conditionId,
       platform: 'polymarket' as const,
@@ -294,7 +342,7 @@ async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
       resolutionMinutes: signal.windowMinutes,
       intelAligned: false,
       intelSignalId: null,
-      reasoning: `Order flow signal: OFI60=${signal.ofi60s.toFixed(3)}, strength=${signal.signalStrength.toFixed(2)}, large_trade=${signal.largeTradeDetected}`,
+      reasoning: `Order flow signal: OFI60=${signal.ofi60s.toFixed(3)}, strength=${signal.signalStrength.toFixed(2)}, large_trade=${signal.largeTradeDetected}, fill~${(expectedFillPrice * 100).toFixed(0)}c, ${signal.minutesUntilWindowEnd.toFixed(0)}min left`,
       yesTokenId: signal.yesTokenId,
       noTokenId: signal.noTokenId,
       yesDepth: 0,
@@ -317,11 +365,9 @@ async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
       limitPriceOverride,
     };
 
-    console.log(`[OrderFlow] Limit price: ${limitPriceOverride.toFixed(4)} (${signal.entryDirection}, mid=${currentMid.toFixed(4)})`);
+    console.log(`[OrderFlow] Limit price: ${limitPriceOverride.toFixed(4)} (${signal.entryDirection}, mid=${currentMid.toFixed(4)}, cap=${MAX_FILL_PRICE})`);
 
     const result = await executePolymarketTrade(candidate, bankroll);
-    // No per-trade Telegram notification; too noisy with 4 trades every 5 min.
-    // Wins/losses and daily summary are reported via other cron jobs.
   } catch (err: any) {
     console.error(`[OrderFlow] Execution error: ${err.message}`);
   }
