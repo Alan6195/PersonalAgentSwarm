@@ -359,18 +359,18 @@ function PositionRow({ pos }: { pos: Position }) {
     <div style={{ padding: '8px 10px', borderBottom: `1px solid ${C.border2}`, fontFamily: 'monospace' }}>
       {/* Row 1: Question + P&L */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
-        <span style={{ fontSize: 11, color: C.white, flex: 1, marginRight: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span className="position-question" style={{ fontSize: 11, color: C.white, flex: 1, marginRight: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {pos.asset && <span style={{ color: C.cyan, marginRight: 6 }}>{pos.asset}</span>}
           {pos.market_question}
         </span>
-        <span style={{ fontSize: 12, fontWeight: 700, color: pnlColor, flexShrink: 0 }}>
+        <span className="position-pnl" style={{ fontSize: 12, fontWeight: 700, color: pnlColor, flexShrink: 0 }}>
           {pnlLabel && <span style={{ fontSize: 7, color: C.label, marginRight: 3 }}>{pnlLabel}</span>}
           {fmt2(displayPnlValue)}
         </span>
       </div>
 
       {/* Row 2: Tags */}
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
+      <div className="position-tags" style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
         <span style={{ fontSize: 9, padding: '1px 6px', border: `1px solid ${pos.direction === 'YES' ? C.green : C.red}`, color: pos.direction === 'YES' ? C.green : C.red }}>{pos.direction}</span>
         {pos.intel_aligned && <span style={{ fontSize: 9, padding: '1px 6px', border: `1px solid ${C.cyan}`, color: C.cyan }}>⚡ INTEL</span>}
         <span style={{ fontSize: 9, color: '#8b5cf6' }}>edge {(pos.edge * 100).toFixed(0)}¢</span>
@@ -383,7 +383,7 @@ function PositionRow({ pos }: { pos: Position }) {
       </div>
 
       {/* Row 3: Trade details grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 4 }}>
+      <div className="position-details-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 4 }}>
         {[
           { l: 'SIZE',    v: `$${pos.bet_size.toFixed(2)}`, c: C.text },
           { l: 'ENTRY',   v: `${(pos.fill_price * 100).toFixed(1)}¢`, c: C.text },
@@ -524,7 +524,7 @@ export default function PredictPage() {
   const trades = p.trades;
 
   return (
-    <div style={{ background: C.bg, minHeight: '100vh', fontFamily: 'monospace', color: C.text, fontSize: 11, overflow: 'hidden' }}>
+    <div className="predict-outer" style={{ background: C.bg, minHeight: '100vh', fontFamily: 'monospace', color: C.text, fontSize: 11, overflow: 'hidden' }}>
       <style>{`
         * { box-sizing: border-box; margin: 0; padding: 0; }
         ::-webkit-scrollbar { width: 3px; }
@@ -534,19 +534,64 @@ export default function PredictPage() {
         @keyframes ping { 75%,100% { transform: scale(2); opacity: 0; } }
         @keyframes dataFlash { 0% { background: rgba(0,255,65,0.08); } 100% { background: transparent; } }
         @font-face { font-family: 'JetBrains Mono'; src: local('JetBrains Mono'); }
+        @media (max-width: 768px) {
+          .predict-topbar { flex-wrap: wrap; gap: 6px !important; padding: 6px 10px !important; }
+          .predict-topbar .topbar-spacer { display: none; }
+          .predict-kpi-strip {
+            display: flex !important;
+            overflow-x: auto !important;
+            -webkit-overflow-scrolling: touch;
+            scroll-snap-type: x mandatory;
+          }
+          .predict-kpi-strip > div {
+            min-width: 120px !important;
+            flex-shrink: 0 !important;
+            scroll-snap-align: start;
+          }
+          .predict-main-grid {
+            display: flex !important;
+            flex-direction: column !important;
+            height: auto !important;
+            overflow: visible !important;
+          }
+          .predict-left-col { display: none !important; }
+          .predict-center-col { order: 1; min-height: 0; overflow: visible !important; }
+          .predict-center-col .equity-section { display: none; }
+          .predict-outer { overflow: auto !important; }
+          .predict-right-col {
+            order: 2;
+            border-left: none !important;
+            border-top: 1px solid #0d2a0d;
+          }
+          .predict-tab-content {
+            max-height: none !important;
+            overflow: visible !important;
+          }
+          .position-details-grid {
+            grid-template-columns: repeat(3, 1fr) !important;
+          }
+          .position-tags { flex-wrap: wrap; }
+          .position-question {
+            white-space: normal !important;
+            font-size: 12px !important;
+            line-height: 1.3 !important;
+          }
+          .position-pnl {
+            font-size: 14px !important;
+          }
+        }
       `}</style>
 
       {/* ── Top bar ── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 14px', background: '#00050000', borderBottom: `1px solid ${C.border}`, flexWrap: 'wrap' }}>
-        <span style={{ color: C.green, fontWeight: 700, fontSize: 13, letterSpacing: '0.08em' }}>◈ PREDICT_AGENT</span>
+      <div className="predict-topbar" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 14px', background: '#00050000', borderBottom: `1px solid ${C.border}`, flexWrap: 'wrap' }}>
+        <span style={{ color: C.green, fontWeight: 700, fontSize: 13, letterSpacing: '0.08em' }}>◈ PREDICT</span>
         {[
-          { label: p.dryRun ? 'DRY RUN' : '⚡ LIVE USDC', color: p.dryRun ? C.yellow : C.green },
-          { label: 'ORDER FLOW', color: C.cyan },
-          { label: 'v1.1.0', color: C.greenDim },
+          { label: p.dryRun ? 'DRY RUN' : '⚡ LIVE', color: p.dryRun ? C.yellow : C.green },
+          { label: 'OFI', color: C.cyan },
         ].map(t => (
           <span key={t.label} style={{ padding: '1px 7px', fontSize: 9, border: `1px solid ${t.color}`, color: t.color, letterSpacing: '0.08em' }}>{t.label}</span>
         ))}
-        <div style={{ flex: 1 }} />
+        <div className="topbar-spacer" style={{ flex: 1 }} />
         {/* live indicator */}
         <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <span style={{ position: 'relative', width: 7, height: 7, display: 'inline-block' }}>
@@ -564,7 +609,7 @@ export default function PredictPage() {
       </div>
 
       {/* ── KPI strip ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', borderBottom: `1px solid ${C.border}`, animation: dataFlash ? 'dataFlash 0.6s ease-out' : 'none' }}>
+      <div className="predict-kpi-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', borderBottom: `1px solid ${C.border}`, animation: dataFlash ? 'dataFlash 0.6s ease-out' : 'none' }}>
         {[
           { label: 'BANKROLL',   value: fmtUsd(bal),                    sub: fmt2(p.bankrollChange),              color: C.green },
           { label: 'WIN RATE',   value: pct(wr),                        sub: `${p.wins}W / ${p.losses}L`,        color: wr >= 0.55 ? C.green : wr > 0 ? C.yellow : C.text },
@@ -583,10 +628,10 @@ export default function PredictPage() {
       </div>
 
       {/* ── Main 3-col grid ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '190px 1fr 230px', height: 'calc(100vh - 88px)', overflow: 'hidden' }}>
+      <div className="predict-main-grid" style={{ display: 'grid', gridTemplateColumns: '190px 1fr 230px', height: 'calc(100vh - 88px)', overflow: 'hidden' }}>
 
         {/* ── LEFT: formulas + risk ── */}
-        <div style={{ borderRight: `1px solid ${C.border}`, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 0 }}>
+        <div className="predict-left-col" style={{ borderRight: `1px solid ${C.border}`, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 0 }}>
           <Panel title="LMSR Cost Function">
             <FRow expr="C(q) = b · ln( Σ eᵍⁱ/ᵇ )" value="b = 100,000" vc={C.text} />
           </Panel>
@@ -714,10 +759,10 @@ export default function PredictPage() {
         </div>
 
         {/* ── CENTER: chart + tabs ── */}
-        <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div className="predict-center-col" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
           {/* Equity chart */}
-          <div style={{ padding: '8px 12px 0', borderBottom: `1px solid ${C.border}` }}>
+          <div className="equity-section" style={{ padding: '8px 12px 0', borderBottom: `1px solid ${C.border}` }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 9, color: C.label, letterSpacing: '0.12em', marginBottom: 6 }}>
               <span>○ EQUITY CURVE — LMSR BAYESIAN STRATEGY · POLYMARKET {p.dryRun ? 'DRY RUN' : 'LIVE'}</span>
               <span style={{ padding: '1px 6px', fontSize: 8, border: `1px solid ${isLive ? C.green : C.yellow}`, color: isLive ? C.green : C.yellow }}>
@@ -760,7 +805,7 @@ export default function PredictPage() {
           </div>
 
           {/* Tab content */}
-          <div style={{ flex: 1, overflowY: 'auto' }}>
+          <div className="predict-tab-content" style={{ flex: 1, overflowY: 'auto' }}>
             {activeTab === 'positions' && (
               data.positions.length === 0
                 ? <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 11 }}>No open positions · next scan scheduled</div>
@@ -780,7 +825,7 @@ export default function PredictPage() {
         </div>
 
         {/* ── RIGHT: phase gate + stats ── */}
-        <div style={{ borderLeft: `1px solid ${C.border}`, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 0 }}>
+        <div className="predict-right-col" style={{ borderLeft: `1px solid ${C.border}`, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 0 }}>
           <TradingStatsPanel gate={gate} perf={perf} />
 
           {/* Polymarket status */}
