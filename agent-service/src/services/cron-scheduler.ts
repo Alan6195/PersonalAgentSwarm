@@ -495,10 +495,8 @@ async function runJob(job: CronJob): Promise<void> {
       await query(`UPDATE cron_jobs SET last_status = 'success', last_run_at = NOW(), next_run_at = $1, last_duration_ms = $2, run_count = run_count + 1, updated_at = NOW() WHERE id = $3`, [nextRun, durationMs, job.id]);
       await taskManager.completeTask(task.id, { content: resSummary, tokensUsed: 0, costCents: 0, durationMs });
 
-      // Only notify on positive resolution (P&L: +X.XX)
-      if (resSummary.includes('resolved') && resSummary.includes('P&L: +')) {
-        try { await sendThrottledTelegram('predict-resolution', `\u{1F4B0} *Predict Win*\n\n${resSummary}`); } catch { /* non-critical */ }
-      }
+      // Resolution notifications disabled (too frequent with 5-min markets).
+      // Wins/losses tracked on dashboard and in daily summary.
 
       console.log(`[Cron] Predict Resolution Check completed (${durationMs}ms): ${resSummary}`);
       return;
