@@ -422,6 +422,65 @@ class OrderFlowService {
         this.pendingEntries.delete(conditionId);
       }
 
+      // ── CHEAP FILL SCANNER ──
+      // Runs every 10s on ALL active markets. Detects when live trade prices
+      // show one side below the cheap-fill threshold (48c). This catches
+      // mid-window opportunities that window-boundary signals miss.
+      // Requires: 10+ min remaining, OFI confirms direction, not recently signaled.
+      const MIN_MINUTES_FOR_CHEAP = 10;
+      const CHEAP_FILL_CAP = 0.48;
+
+      if (minutesUntilEnd >= MIN_MINUTES_FOR_CHEAP && msUntilEnd > 0) {
+        // Get latest trade price from WebSocket data (more current than discovery midPrice)
+        const history = this.tradeHistory.get(market.yesTokenId);
+        if (history && history.length > 0) {
+          const latestTrade = history[history.length - 1];
+          const liveMid = latestTrade.price; // last YES trade price approximates mid
+
+          // Check if either side is cheap
+          const yesCost = liveMid;
+          const noCost = 1 - liveMid;
+          const cheapSide = yesCost < noCost ? 'YES' : 'NO';
+          const cheapPrice = Math.min(yesCost, noCost);
+
+          if (cheapPrice < CHEAP_FILL_CAP) {
+            const signal = this.computeSignal(market);
+
+            // OFI must confirm the cheap side direction
+            const ofiDirection = signal.ofi60s > 0 ? 'YES' : 'NO';
+            const ofiConfirms = ofiDirection === cheapSide && Math.abs(signal.ofi60s) > 0.15;
+
+            // Dedup: don't re-signal same market within 3 minutes
+            const cheapKey = `cheap_${conditionId}`;
+            if (ofiConfirms && signal.signalStrength >= 0.30 && !this.recentlySignaled.has(cheapKey)) {
+              this.recentlySignaled.add(cheapKey);
+              setTimeout(() => this.recentlySignaled.delete(cheapKey), 180_000); // 3 min dedup
+
+              const tradeSignal: OrderFlowSignal = {
+                ...signal,
+                conditionId: market.conditionId,
+                question: market.question,
+                windowMinutes: market.windowMinutes,
+                windowEnd: market.endTime,
+                minutesUntilWindowEnd: minutesUntilEnd,
+                midPrice: liveMid, // use live price, not stale discovery price
+                yesTokenId: market.yesTokenId,
+                noTokenId: market.noTokenId,
+                entryDirection: cheapSide as 'YES' | 'NO',
+              };
+
+              console.log(
+                `[OrderFlow] CHEAP_FILL: ${market.asset} ${cheapSide} ` +
+                `${(cheapPrice * 100).toFixed(1)}c | OFI60=${signal.ofi60s.toFixed(3)} ` +
+                `str=${signal.signalStrength.toFixed(2)} | ${minutesUntilEnd.toFixed(0)}min left ` +
+                `| "${market.question.substring(0, 50)}"`
+              );
+              this.onSignal?.(tradeSignal);
+            }
+          }
+        }
+      }
+
       // Persist OFI to DB for dashboard (throttled to every 30s)
       if (now % 30_000 < SIGNAL_CHECK_INTERVAL_MS) {
         this.persistSignal(market).catch(() => {});
