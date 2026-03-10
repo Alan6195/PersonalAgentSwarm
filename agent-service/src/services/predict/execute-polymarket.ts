@@ -826,8 +826,8 @@ export async function reconcilePolymarketPositions(): Promise<{
         if (minutesSinceExpiry > 0) {
           console.log(`[PolyResolve] #${pos.id} expired ${minutesSinceExpiry.toFixed(0)}min ago | prices: ${tokenPrices}`);
         }
-        if (minutesSinceExpiry > 2) {
-          // Market expired > 2 minutes ago. Check token prices for clear winner.
+        if (minutesSinceExpiry > 1) {
+          // Market expired > 1 minute ago. Check token prices for clear winner.
           const priceWinner = tokens.find((t: any) => parseFloat(t.price || '0') >= 0.85);
           if (priceWinner) {
             console.log(`[PolyResolve] Soft-resolving via price: ${priceWinner.outcome} at $${parseFloat(priceWinner.price).toFixed(3)} (${minutesSinceExpiry.toFixed(0)}min post-expiry)`);
