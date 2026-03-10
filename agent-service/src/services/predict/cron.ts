@@ -653,6 +653,21 @@ export async function handlePolymarketScan(taskId: number): Promise<string> {
     if (market.netEdge < 0.06) continue; // 6c net edge threshold (LMSR removed, signal-only edge)
     if (market.betAmount < 0.50) continue;
 
+    // ── STRATEGY FILTER: cheap fills only ──
+    // Data shows only <48c fills are profitable (77.8% WR vs 28-37% for expensive fills).
+    // contractPrice = cost of the token we're buying (YES price or 1 - YES price for NO).
+    const contractPrice = market.direction === 'YES' ? market.pYes : (1 - market.pYes);
+    if (contractPrice > MAX_FILL_PRICE) {
+      console.log(`[PolyScan] SKIP: ${market.question.substring(0, 50)} ${market.direction} — fill ${(contractPrice * 100).toFixed(0)}c > ${(MAX_FILL_PRICE * 100).toFixed(0)}c cap`);
+      continue;
+    }
+
+    // ── STRATEGY FILTER: enough time remaining ──
+    if (market.resolutionMinutes < MIN_MINUTES_REMAINING) {
+      console.log(`[PolyScan] SKIP: ${market.question.substring(0, 50)} — only ${market.resolutionMinutes}min left`);
+      continue;
+    }
+
     const result = await executePolymarketTrade(market, bankroll);
     if (result.success) {
       if (result.dryRun) {
