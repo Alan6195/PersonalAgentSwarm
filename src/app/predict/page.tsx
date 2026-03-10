@@ -448,25 +448,40 @@ function PositionRow({ pos }: { pos: Position }) {
         <span style={{ fontSize: 9, color: C.dim, marginLeft: 'auto' }}>{timeAgo(pos.opened_at)}</span>
       </div>
 
-      {/* Row 3: Trade details grid */}
-      <div className="position-details-grid" style={{ display: 'grid', gridTemplateColumns: isClosed ? 'repeat(4, 1fr)' : 'repeat(5, 1fr)', gap: 4 }}>
-        {[
-          { l: 'SIZE',    v: `$${pos.bet_size.toFixed(2)}`, c: C.text },
-          { l: 'ENTRY',   v: `${(pos.fill_price * 100).toFixed(1)}¢`, c: C.text },
-          ...(!isClosed ? [
-            { l: 'CURRENT', v: hasLive ? `${(pos.current_price! * 100).toFixed(1)}¢` : '--', c: livePnlHint },
-          ] : []),
-          { l: 'SHARES',  v: pos.shares.toFixed(1), c: C.text },
-          { l: isClosed ? 'P&L' : 'IF WIN',
-            v: isClosed ? `${displayPnl >= 0 ? '+' : ''}${fmt2(displayPnl)}` : `+${pos.potential_win.toFixed(2)}`,
-            c: isClosed ? pnlColor : C.greenDim },
-        ].map(d => (
-          <div key={d.l}>
-            <div style={{ fontSize: 7, color: C.label, letterSpacing: '0.08em' }}>{d.l}</div>
-            <div style={{ fontSize: 10, color: d.c, fontWeight: 600 }}>{d.v}</div>
-          </div>
-        ))}
-      </div>
+      {/* Row 3: Trade details */}
+      {isClosed ? (
+        <div className="position-details-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4 }}>
+          {[
+            { l: 'RISK',  v: `$${pos.bet_size.toFixed(2)}`, c: C.text },
+            { l: 'ENTRY', v: `${(pos.fill_price * 100).toFixed(1)}¢`, c: C.text },
+            { l: 'SHARES', v: pos.shares.toFixed(1), c: C.text },
+            { l: 'P&L',   v: `${displayPnl >= 0 ? '+' : ''}${fmt2(displayPnl)}`, c: pnlColor },
+          ].map(d => (
+            <div key={d.l}>
+              <div style={{ fontSize: 7, color: C.label, letterSpacing: '0.08em' }}>{d.l}</div>
+              <div style={{ fontSize: 10, color: d.c, fontWeight: 600 }}>{d.v}</div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 10, color: C.dim }}>
+            RISK <span style={{ color: C.text, fontWeight: 600 }}>${pos.bet_size.toFixed(2)}</span>
+          </span>
+          <span style={{ fontSize: 10, color: C.dim }}>→</span>
+          <span style={{ fontSize: 10, color: C.dim }}>
+            WIN <span style={{ color: C.green, fontWeight: 600 }}>${(pos.bet_size + pos.potential_win).toFixed(2)}</span>
+          </span>
+          <span style={{ fontSize: 10, color: C.green, fontWeight: 700 }}>
+            +{Math.round((pos.potential_win / pos.bet_size) * 100)}%
+          </span>
+          {hasLive && (
+            <span style={{ fontSize: 10, color: C.dim, marginLeft: 'auto' }}>
+              now <span style={{ color: livePnlHint, fontWeight: 600 }}>{(pos.current_price! * 100).toFixed(1)}¢</span>
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
