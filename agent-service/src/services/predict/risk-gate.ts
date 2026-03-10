@@ -42,13 +42,13 @@ export const RISK_LIMITS: RiskLimits = {
 // High-frequency small bets need looser limits than Manifold's long-horizon bets.
 // Positions resolve every 5-15 minutes, so exposure turns over rapidly.
 export const POLY_RISK_LIMITS: RiskLimits = {
-  maxPositionPct: 0.05,       // 5% max per trade
-  maxCategoryPct: 0.50,       // 50% per category (all OFI trades are crypto; need room for 4 assets)
-  maxTotalExposurePct: 0.60,  // 60% max deployed (4 assets * 5% = 20% per cycle, leave headroom)
-  dailyLossPausePct: 1.00,    // Disabled: no daily loss pause (was 25%)
-  drawdownPausePct: 0.30,     // 30% drawdown from peak = hard stop
-  minEdge: 0.06,              // 6c net edge (LMSR removed; edge from momentum + intel signals only)
-  minBet: 1.00,               // raised from 0.50 — small bets waste execution overhead
+  maxPositionPct: 0.10,       // 10% max per trade (was 5%)
+  maxCategoryPct: 0.80,       // 80% per category (let it rip)
+  maxTotalExposurePct: 0.80,  // 80% max deployed
+  dailyLossPausePct: 1.00,    // Disabled: no daily loss pause
+  drawdownPausePct: 1.00,     // Disabled: no drawdown pause (was 30%)
+  minEdge: 0.05,              // 5c net edge (was 6c)
+  minBet: 0.50,               // lowered from 1.00 to keep trading with smaller bankroll
 };
 
 /**
