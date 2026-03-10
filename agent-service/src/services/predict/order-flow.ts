@@ -450,8 +450,10 @@ class OrderFlowService {
             const ofiDirection = signal.ofi60s > 0 ? 'YES' : 'NO';
             const ofiConfirms = ofiDirection === cheapSide && Math.abs(signal.ofi60s) > 0.15;
 
-            // Dedup: don't re-signal same market within 3 minutes
-            const cheapKey = `cheap_${conditionId}`;
+            // Dedup: don't re-signal same ASSET within 3 minutes.
+            // Use asset name (not conditionId) because multiple windows
+            // for the same asset (5m + 15m) are effectively the same bet.
+            const cheapKey = `cheap_${market.asset}`;
             if (ofiConfirms && signal.signalStrength >= 0.30 && !this.recentlySignaled.has(cheapKey)) {
               this.recentlySignaled.add(cheapKey);
               setTimeout(() => this.recentlySignaled.delete(cheapKey), 180_000); // 3 min dedup

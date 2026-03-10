@@ -157,6 +157,24 @@ const MIN_MINUTES_REMAINING = 10;  // Only enter with 10+ min remaining (15+ is 
 async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
   if (!signal.entryDirection) return;
 
+  // ── STRATEGY GATE 0: One position per asset ──
+  // Multiple windows (5m, 15m) for the same asset are the same directional bet.
+  // Don't stack multiple positions on the same asset.
+  const existingPosition = await queryOne<{ id: number; question: string }>(
+    `SELECT id, question FROM market_positions
+     WHERE platform = 'polymarket' AND status = 'open'
+       AND question ILIKE $1
+       AND (end_time IS NULL OR end_time > NOW())`,
+    [`%${signal.asset === 'BTC' ? 'Bitcoin' : signal.asset === 'ETH' ? 'Ethereum' : signal.asset === 'SOL' ? 'Solana' : signal.asset} Up or Down%`]
+  );
+  if (existingPosition) {
+    console.log(
+      `[OrderFlow] SKIP: ${signal.asset} ${signal.entryDirection} — ` +
+      `already have open position #${existingPosition.id} on this asset`
+    );
+    return;
+  }
+
   // ── STRATEGY GATE 1: Time remaining ──
   // Data shows <15 min entries have 0-28% win rate. Only enter with enough time.
   if (signal.minutesUntilWindowEnd < MIN_MINUTES_REMAINING) {
