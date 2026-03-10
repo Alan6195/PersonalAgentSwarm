@@ -280,16 +280,35 @@ class OrderFlowService {
     const eventType = msg.event_type as string;
 
     // Log first few messages for debugging subscription format
-    if (this.msgCount <= 10) {
+    if (this.msgCount <= 5) {
       console.log(`[OrderFlow] WS msg #${this.msgCount}: event_type=${eventType}, keys=${Object.keys(msg).join(',')}`);
-      if (eventType === 'price_change') {
-        console.log(`[OrderFlow] price_change sample: ${JSON.stringify(msg).substring(0, 500)}`);
-      }
     }
 
     if (eventType === 'last_trade_price') {
       this.tradeCount++;
       this.handleTrade(msg);
+    } else if (eventType === 'price_change') {
+      // price_change events contain filled order data with asset_id, price, size, side.
+      // Process each token's fill as a trade for order flow computation.
+      const changes = msg.price_changes as any[];
+      if (Array.isArray(changes)) {
+        for (const pc of changes) {
+          const assetId = pc.asset_id as string;
+          const side = pc.side as string;
+          const size = parseFloat(pc.size);
+          const price = parseFloat(pc.price);
+          if (assetId && side && !isNaN(size) && !isNaN(price) && this.tradeHistory.has(assetId)) {
+            this.tradeCount++;
+            this.handleTrade({
+              asset_id: assetId,
+              side,
+              size: String(size),
+              price: String(price),
+              timestamp: String(msg.timestamp || Date.now()),
+            });
+          }
+        }
+      }
     }
 
     // Periodic status log every 60s
