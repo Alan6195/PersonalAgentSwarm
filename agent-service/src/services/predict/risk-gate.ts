@@ -330,7 +330,9 @@ async function getOrCreateDailyRisk(platform: string, bankroll: number): Promise
 
 async function getTotalOpenExposure(platform: string): Promise<number> {
   const row = await queryOne<{ total: string }>(
-    `SELECT COALESCE(SUM(bet_size), 0) as total FROM market_positions WHERE platform = $1 AND status = 'open'`,
+    `SELECT COALESCE(SUM(bet_size), 0) as total FROM market_positions
+     WHERE platform = $1 AND status = 'open'
+       AND (end_time IS NULL OR end_time > NOW())`,
     [platform]
   );
   return parseFloat(row?.total || '0');
@@ -338,7 +340,9 @@ async function getTotalOpenExposure(platform: string): Promise<number> {
 
 async function getCategoryExposure(platform: string, category: string): Promise<number> {
   const row = await queryOne<{ total: string }>(
-    `SELECT COALESCE(SUM(bet_size), 0) as total FROM market_positions WHERE platform = $1 AND status = 'open' AND category = $2`,
+    `SELECT COALESCE(SUM(bet_size), 0) as total FROM market_positions
+     WHERE platform = $1 AND status = 'open' AND category = $2
+       AND (end_time IS NULL OR end_time > NOW())`,
     [platform, category]
   );
   return parseFloat(row?.total || '0');
