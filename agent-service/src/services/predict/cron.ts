@@ -207,35 +207,17 @@ async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
   // Get bankroll
   const bankroll = await getPolyBankroll();
 
-  // Rolling Kelly: use empirical win rate from last 20 CHEAP trades for bet sizing
-  // (only count trades that match our strategy filter for accurate sizing)
-  const recentTrades = await query<{ status: string }>(
-    `SELECT status FROM market_positions
-     WHERE platform = 'polymarket'
-       AND status IN ('closed_win', 'closed_loss')
-       AND fill_price < 0.48
-       AND (notes IS NULL OR notes NOT LIKE 'scanner bug%')
-       AND (notes IS NULL OR notes NOT LIKE 'Auto-closed%')
-     ORDER BY closed_at DESC LIMIT 20`
-  );
-  const wins = recentTrades.filter(r => r.status === 'closed_win').length;
-  const total = recentTrades.length;
-  // Use cheap-fill win rate (historically ~58-78%), fallback to 55% if not enough data
-  const recentWR = total >= 5 ? wins / total : 0.55;
+  // Bet sizing: aggressive fixed percentage for proven cheap-fill edge.
+  // Historical data: cheap fill (<48c) + 15min = 78% WR, +$22.54.
+  // Kelly at 78% WR and ~1.2x odds = 40%+. We use 15-20% of bankroll
+  // (aggressive half-Kelly for a proven edge), min $1.00 per trade.
+  //
+  // Scale by fill price: cheaper fills = higher payout ratio = bigger bet
+  const fillPctAdj = expectedFillPrice < 0.40 ? 0.20   // very cheap: 20% bankroll
+                   : expectedFillPrice < 0.45 ? 0.18   // cheap: 18%
+                   :                            0.15;   // near cap: 15%
 
-  // Kelly formula for binary market (win ~= 1x bet at cheap fills)
-  // At 45c fill, win pays ~55c profit on 45c risk => odds ~= 1.22x
-  const effectiveOdds = (1 - expectedFillPrice) / expectedFillPrice; // e.g., 0.55/0.45 = 1.22
-  const rawKelly = Math.max(0, recentWR - (1 - recentWR) / effectiveOdds);
-
-  // Aggressive fractional Kelly: we have a proven 78% edge at cheap fills
-  const kellyFraction = recentWR > 0.65 ? 0.50
-                       : recentWR > 0.55 ? 0.33
-                       : recentWR > 0.50 ? 0.20
-                       :                   0.10;
-
-  const betPct = Math.min(rawKelly * kellyFraction, 0.15); // 15% cap (proven edge deserves bigger bets)
-  const betSize = Math.max(0.50, bankroll * betPct);        // min $0.50
+  const betSize = Math.max(1.00, bankroll * fillPctAdj);  // min $1.00 per trade
 
   // Model probability estimate from OFI
   const ofiToProbShift = signal.ofi60s * 0.25;
@@ -336,7 +318,7 @@ async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
       edge: signal.signalStrength * 0.15,
       direction: signal.entryDirection as 'YES' | 'NO',
       betAmount: betSize,
-      kellyFrac: rawKelly * kellyFraction,
+      kellyFrac: fillPctAdj,
       expectedRet: signal.signalStrength * 0.10,
       score: signal.signalStrength,
       resolutionMinutes: signal.windowMinutes,
