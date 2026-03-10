@@ -529,7 +529,7 @@ function HypRow({ h }: { h: Hypothesis }) {
 export default function PredictPage() {
   const [data, setData]       = useState<DashboardData>(MOCK_DATA);
   const [isLive, setIsLive]   = useState(false);
-  const [activeTab, setTab]   = useState<'positions' | 'scans' | 'hypotheses'>('positions');
+  const [activeTab, setTab]   = useState<'positions' | 'history' | 'scans' | 'hypotheses'>('positions');
   const [tick, setTick]       = useState(0);
   const [lastFetchAt, setLastFetchAt] = useState<number>(Date.now());
   const [secondsAgo, setSecondsAgo]   = useState(0);
@@ -862,34 +862,48 @@ export default function PredictPage() {
 
           {/* Tabs */}
           <div style={{ display: 'flex', borderBottom: `1px solid ${C.border}` }}>
-            {(['positions', 'scans', 'hypotheses'] as const).map(tab => (
-              <button
-                key={tab}
-                onClick={() => setTab(tab)}
-                style={{
-                  padding: '6px 16px', background: 'transparent', cursor: 'pointer',
-                  border: 'none', borderBottom: activeTab === tab ? `2px solid ${C.green}` : '2px solid transparent',
-                  color: activeTab === tab ? C.green : C.label,
-                  fontFamily: 'monospace', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em',
-                }}
-              >
-                {tab}
-                {tab === 'positions' && data.positions.length > 0 && (
-                  <span style={{ marginLeft: 5, background: C.greenFaint, color: C.green, padding: '1px 5px', fontSize: 9 }}>
-                    {data.positions.length}
-                  </span>
-                )}
-              </button>
-            ))}
+            {(['positions', 'history', 'scans', 'hypotheses'] as const).map(tab => {
+              const openPositions = data.positions.filter(p => p.status === 'open');
+              const closedPositions = data.positions.filter(p => p.status === 'closed_win' || p.status === 'closed_loss');
+              const count = tab === 'positions' ? openPositions.length
+                : tab === 'history' ? closedPositions.length
+                : 0;
+              return (
+                <button
+                  key={tab}
+                  onClick={() => setTab(tab)}
+                  style={{
+                    padding: '6px 16px', background: 'transparent', cursor: 'pointer',
+                    border: 'none', borderBottom: activeTab === tab ? `2px solid ${C.green}` : '2px solid transparent',
+                    color: activeTab === tab ? C.green : C.label,
+                    fontFamily: 'monospace', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em',
+                  }}
+                >
+                  {tab}
+                  {count > 0 && (
+                    <span style={{ marginLeft: 5, background: tab === 'history' ? '#1a1a2e' : C.greenFaint, color: tab === 'history' ? C.yellow : C.green, padding: '1px 5px', fontSize: 9 }}>
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
 
           {/* Tab content */}
           <div className="predict-tab-content" style={{ flex: 1, overflowY: 'auto' }}>
-            {activeTab === 'positions' && (
-              data.positions.length === 0
+            {activeTab === 'positions' && (() => {
+              const open = data.positions.filter(p => p.status === 'open');
+              return open.length === 0
                 ? <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 11 }}>No open positions · next scan scheduled</div>
-                : data.positions.map(p => <PositionRow key={p.id} pos={p} />)
-            )}
+                : open.map(p => <PositionRow key={p.id} pos={p} />);
+            })()}
+            {activeTab === 'history' && (() => {
+              const closed = data.positions.filter(p => p.status === 'closed_win' || p.status === 'closed_loss');
+              return closed.length === 0
+                ? <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 11 }}>No resolved trades in the last hour</div>
+                : closed.map(p => <PositionRow key={p.id} pos={p} />);
+            })()}
             {activeTab === 'scans' && (
               data.recentScans.length === 0
                 ? <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 11 }}>No scans yet · first scan fires at scheduled time</div>

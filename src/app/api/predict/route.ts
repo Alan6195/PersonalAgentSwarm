@@ -148,11 +148,11 @@ async function getDashboard() {
             intel_aligned, status, pnl, opened_at, closed_at
      FROM market_positions
      WHERE status = 'open'
-        OR (status IN ('closed_win', 'closed_loss') AND closed_at > NOW() - INTERVAL '1 hour')
+        OR (status IN ('closed_win', 'closed_loss') AND closed_at > NOW() - INTERVAL '3 hours')
      ORDER BY
        CASE WHEN status = 'open' THEN 0 ELSE 1 END,
-       opened_at DESC
-     LIMIT 30`
+       COALESCE(closed_at, opened_at) DESC
+     LIMIT 50`
   );
 
   // Fetch live market prices for open Polymarket positions (parallel)
