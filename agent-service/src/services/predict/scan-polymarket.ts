@@ -305,28 +305,31 @@ export async function scanPolymarket(): Promise<PolyCandidate[]> {
         pAfterMomentum = bayesUpdate(pBase, momentumLikelihood.up);
       }
 
-      // Signal 2: Intel sentiment from X agent shared_signals (decayed + aggregated)
+      // Signal 2: Intel sentiment from X agent shared_signals
+      // DISABLED: Trade data analysis (101 trades) shows intel alignment HURTS:
+      //   intel_aligned=true:  33.3% WR, -$16.20
+      //   intel_aligned=false: 42.0% WR, -$1.07
+      // Intel was pushing all-bearish across 4 assets even during BTC uptrend.
+      // We log intel for tracking but do NOT let it shift the Bayesian posterior.
       const intelSummary = await getIntelSummary(asset);
 
-      let pBayes = pAfterMomentum;
+      let pBayes = pAfterMomentum; // intel no longer shifts this
       let intelAligned = false;
       let intelSignalId: number | null = null;
 
       const hasIntelSignal = intelSummary &&
         intelSummary.signalCount > 0 &&
         Math.abs(intelSummary.netSentiment) > 0.2 &&
-        intelSummary.freshestSignalAge < 30; // 30 min max (tightened from 120 for 5/15-min markets)
+        intelSummary.freshestSignalAge < 30;
 
       if (hasIntelSignal) {
-        const intelLikelihood = computeIntelLikelihood(intelSummary!, minutes);
-        pBayes = bayesUpdate(pAfterMomentum, intelLikelihood.up);
+        // Log but do NOT apply: intel alignment hurts performance
         intelAligned = Math.abs(intelSummary!.netSentiment) > 0.1;
+        console.log(`[PolyScan] Intel for ${asset}: net=${intelSummary!.netSentiment.toFixed(2)} (logged, NOT applied to pBayes)`);
       }
 
-      // Signal gate: require at least one real signal. No signal = no trade.
-      // Without this, midPrice == pBase == pBayes and edge = 0, but floating point
-      // noise could create tiny spurious edges.
-      if (!hasMomentumSignal && !hasIntelSignal) continue;
+      // Signal gate: require price momentum. Intel alone is not sufficient.
+      if (!hasMomentumSignal) continue;
 
       // Legacy: check old intel signals for signal ID tracking
       const intel = intelSignals.find(s =>

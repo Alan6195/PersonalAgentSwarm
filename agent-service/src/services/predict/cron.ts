@@ -613,23 +613,11 @@ export async function handlePolymarketScan(taskId: number): Promise<string> {
     s && s.momentum !== 'neutral' && s.momentumStrength > 0.2
   );
 
-  // Check for strong intel signals (bearish or bullish >= 0.5 strength)
-  let hasStrongIntel = false;
+  // Intel-only trigger DISABLED: trade data analysis shows intel alignment hurts
+  // performance (33% WR vs 42% without intel). Only trade on price momentum.
   if (!hasAnyMomentum) {
-    const assets = ['BTC', 'ETH', 'SOL', 'XRP'];
-    for (const asset of assets) {
-      const intel = await getIntelSummary(asset);
-      if (intel && (intel.bearishStrength >= 0.5 || intel.bullishStrength >= 0.5)) {
-        hasStrongIntel = true;
-        console.log(`[PolyScan] Intel trigger: ${asset} has ${intel.bearishStrength >= 0.5 ? 'bearish' : 'bullish'} signal (str=${Math.max(intel.bearishStrength, intel.bullishStrength).toFixed(2)})`);
-        break;
-      }
-    }
-  }
-
-  if (!hasAnyMomentum && !hasStrongIntel) {
-    console.log('[PolyScan] Skipped — no momentum and no strong intel signals');
-    return 'Scan skipped — no momentum signal and no strong intel. All quiet.';
+    console.log('[PolyScan] Skipped — no momentum signal (intel disabled as trigger)');
+    return 'Scan skipped — no momentum signal. All quiet.';
   }
 
   // Update cooldown timestamp (prevents momentum watcher from re-triggering)
