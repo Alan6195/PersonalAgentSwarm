@@ -822,6 +822,10 @@ export async function reconcilePolymarketPositions(): Promise<{
         // price >= 0.85, treat that outcome as the winner. Polymarket's oracle can
         // take hours to formally resolve 5-min markets, but prices settle quickly.
         const minutesSinceExpiry = getMinutesSinceExpiry(pos.question);
+        const tokenPrices = tokens.map((t: any) => `${t.outcome}=$${parseFloat(t.price || '0').toFixed(3)}`).join(', ');
+        if (minutesSinceExpiry > 0) {
+          console.log(`[PolyResolve] #${pos.id} expired ${minutesSinceExpiry.toFixed(0)}min ago | prices: ${tokenPrices}`);
+        }
         if (minutesSinceExpiry > 2) {
           // Market expired > 2 minutes ago. Check token prices for clear winner.
           const priceWinner = tokens.find((t: any) => parseFloat(t.price || '0') >= 0.85);
@@ -942,22 +946,39 @@ function isMarketExpired(question: string): boolean {
 
 function getMinutesSinceExpiry(question: string): number {
   // Extract end time from question like "March 9, 12:20PM ET"
-  const match = question.match(/(\d{1,2}):(\d{2})(AM|PM)\s*ET$/i);
-  if (!match) return -1;
+  const timeMatch = question.match(/(\d{1,2}):(\d{2})(AM|PM)\s*ET$/i);
+  if (!timeMatch) return -1;
 
-  let hours = parseInt(match[1]);
-  const minutes = parseInt(match[2]);
-  const isPM = match[3].toUpperCase() === 'PM';
+  // Extract date from question like "March 9,"
+  const dateMatch = question.match(/(\w+)\s+(\d{1,2}),/);
+  if (!dateMatch) return -1;
+
+  let hours = parseInt(timeMatch[1]);
+  const minutes = parseInt(timeMatch[2]);
+  const isPM = timeMatch[3].toUpperCase() === 'PM';
 
   if (isPM && hours !== 12) hours += 12;
   if (!isPM && hours === 12) hours = 0;
+
+  // Parse the actual date from the question (e.g., "March 9")
+  const monthName = dateMatch[1];
+  const day = parseInt(dateMatch[2]);
+  const monthIndex = new Date(`${monthName} 1, 2000`).getMonth();
 
   // Convert ET to UTC dynamically (handles EDT/EST transitions automatically)
   const etOffset = getETOffsetHours();
 
   const now = new Date();
-  const expiry = new Date(now);
-  expiry.setUTCHours(hours + etOffset, minutes, 0, 0);
+  const year = now.getUTCFullYear();
+
+  // Build expiry using actual date from question; hours+etOffset overflow
+  // is handled correctly by Date.UTC (e.g., 26 hours = next day at 2 AM)
+  const expiry = new Date(Date.UTC(year, monthIndex, day, hours + etOffset, minutes, 0, 0));
+
+  // Handle year boundary (question says "December 31" but we're in January)
+  if (expiry.getTime() > now.getTime() + 180 * 24 * 3600 * 1000) {
+    expiry.setUTCFullYear(year - 1);
+  }
 
   return (now.getTime() - expiry.getTime()) / 60000;
 }
