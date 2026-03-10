@@ -613,6 +613,13 @@ export async function handlePolymarketScan(taskId: number): Promise<string> {
       } else {
         tradesOpened++;
       }
+      // Mark scan as acted on for dashboard labeling
+      query(
+        `UPDATE market_scans SET acted_on = true
+         WHERE market_id = $1 AND scanned_at > NOW() - INTERVAL '10 minutes'
+         AND acted_on = false`,
+        [market.id]
+      ).catch(() => {});
       if (tradesOpened >= 2) break; // Max 2 trades per 3-min scan cycle
     } else if (result.riskRejection) {
       tradesBlocked++;
@@ -621,7 +628,16 @@ export async function handlePolymarketScan(taskId: number): Promise<string> {
   }
 
   const mode = isPolyDryRun() ? 'DRY RUN' : 'LIVE';
-  let result = `[${mode}] Polymarket: ${candidates.length} markets, ${tradesOpened} trades, ${dryRunCount} dry-run, ${tradesBlocked} blocked. Bankroll: $${bankroll.toFixed(2)}`;
+  let result = `[${mode}] Polymarket: ${candidates.length} mkts scanned, ${tradesOpened} traded, ${tradesBlocked} blocked. Bankroll: $${bankroll.toFixed(2)}`;
+
+  // Telemetry: log top 3 candidates with their edge and why they were blocked
+  const topThree = candidates.slice(0, 3);
+  for (const c of topThree) {
+    const netEdgeC = (c.netEdge * 100).toFixed(0);
+    const betC = c.betAmount.toFixed(2);
+    const assetQ = c.question.substring(0, 40);
+    console.log(`[PolyScan] Candidate: ${assetQ}... | edge=${netEdgeC}c | bet=$${betC} | dir=${c.direction}`);
+  }
 
   // Check if /predict golive wait is active and we found a qualifying candidate (net edge >= 6c)
   const topCandidate = candidates.find(c => c.netEdge >= 0.06);

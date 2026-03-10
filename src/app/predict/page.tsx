@@ -53,6 +53,7 @@ interface Scan {
   kelly_fraction: number;
   reasoning: string;
   created_at: string;
+  acted_on?: boolean;
 }
 
 interface Hypothesis {
@@ -421,10 +422,19 @@ function PositionRow({ pos }: { pos: Position }) {
 // ── Scan row ──────────────────────────────────────────────────────────────
 function ScanRow({ scan }: { scan: Scan }) {
   const edgeColor = scan.edge >= 0.08 ? C.green : scan.edge >= 0.04 ? C.yellow : C.red;
+  const betLabel = scan.acted_on;
   return (
-    <div style={{ padding: '7px 10px', borderBottom: `1px solid ${C.border2}`, fontFamily: 'monospace' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-        <span style={{ fontSize: 10, color: C.text, flex: 1, marginRight: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+    <div style={{ padding: '7px 10px', borderBottom: `1px solid ${C.border2}`, fontFamily: 'monospace', borderLeft: `3px solid ${betLabel ? C.green : C.red}` }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3, alignItems: 'center' }}>
+        <span style={{
+          fontSize: 8, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' as const,
+          color: betLabel ? '#0a0a0a' : '#0a0a0a',
+          background: betLabel ? C.green : C.red,
+          padding: '1px 5px', borderRadius: 2, marginRight: 6, flexShrink: 0,
+        }}>
+          {betLabel ? 'BET' : 'SKIP'}
+        </span>
+        <span className="position-question" style={{ fontSize: 10, color: C.text, flex: 1, marginRight: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {etToMst(scan.market_question)}
         </span>
         <span style={{ fontSize: 11, color: edgeColor, fontWeight: 700, flexShrink: 0 }}>

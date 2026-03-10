@@ -17,6 +17,7 @@ import { config, isPolyDryRun } from '../../config';
 import { query, queryOne } from '../../db';
 import { validateTrade, recordTradeOpened, type TradeCandidate } from './risk-gate';
 import type { PolyCandidate } from './scan-polymarket';
+import { maybeLogHypothesis } from './learn';
 
 const CLOB_HOST = 'https://clob.polymarket.com';
 const CHAIN_ID = 137; // Polygon mainnet
@@ -731,6 +732,41 @@ export async function getUSDCBalance(): Promise<number | null> {
  * For Up/Down 5-15 min markets, resolution happens automatically after expiry.
  * Returns summary of resolved positions.
  */
+
+/** Extract window duration from question text like "12:15PM-12:20PM ET" */
+function extractWindowMinutes(question: string): number | undefined {
+  const match = question.match(/(\d{1,2}):(\d{2})(AM|PM)-(\d{1,2}):(\d{2})(AM|PM)\s*ET$/i);
+  if (!match) return undefined;
+  let h1 = parseInt(match[1]); const m1 = parseInt(match[2]); const ap1 = match[3].toUpperCase();
+  let h2 = parseInt(match[4]); const m2 = parseInt(match[5]); const ap2 = match[6].toUpperCase();
+  if (ap1 === 'PM' && h1 !== 12) h1 += 12; if (ap1 === 'AM' && h1 === 12) h1 = 0;
+  if (ap2 === 'PM' && h2 !== 12) h2 += 12; if (ap2 === 'AM' && h2 === 12) h2 = 0;
+  return (h2 * 60 + m2) - (h1 * 60 + m1);
+}
+
+/** Extract asset from question text like "Will BTC go up..." */
+function extractAsset(question: string): string | undefined {
+  const match = question.match(/\b(BTC|ETH|SOL|XRP)\b/i);
+  return match ? match[1].toUpperCase() : undefined;
+}
+
+/** Fire-and-forget hypothesis logging after Polymarket resolution */
+function logPolyHypothesis(pos: any, pnl: number, betSize: number): void {
+  const pnlPct = betSize > 0 ? pnl / betSize : 0;
+  maybeLogHypothesis({
+    positionId: pos.id,
+    category: pos.category || 'crypto',
+    direction: pos.direction,
+    edge: parseFloat(pos.edge) || 0,
+    pnlPct,
+    marketQuestion: pos.question,
+    intelAligned: pos.intel_aligned ?? false,
+    asset: pos.asset || extractAsset(pos.question),
+    windowMinutes: extractWindowMinutes(pos.question),
+    platform: 'polymarket',
+  }).catch(err => console.warn(`[PolyResolve] Hypothesis log failed:`, (err as Error).message));
+}
+
 export async function reconcilePolymarketPositions(): Promise<{
   checked: number;
   closed: number;
@@ -741,7 +777,8 @@ export async function reconcilePolymarketPositions(): Promise<{
   const result = { checked: 0, closed: 0, wins: 0, losses: 0, totalPnl: 0 };
 
   const positions = await query<any>(
-    `SELECT id, market_id, question, direction, bet_size, fill_price, edge
+    `SELECT id, market_id, question, direction, bet_size, fill_price, edge,
+            asset, category, intel_aligned, notes
      FROM market_positions WHERE platform = $1 AND status = $2`,
     ['polymarket', 'open']
   );
@@ -763,10 +800,12 @@ export async function reconcilePolymarketPositions(): Promise<{
         // Fallback: force-close if expired > 60 minutes
         if (isMarketExpired(pos.question) && getMinutesSinceExpiry(pos.question) > 60) {
           console.warn(`[PolyResolve] Force-closing stale position (API error, 60+ min post-expiry)`);
-          await closePosition(pos.id, 'closed_loss', -parseFloat(pos.bet_size), 'Force-closed: API error + expired');
+          const fcBetSize = parseFloat(pos.bet_size);
+          await closePosition(pos.id, 'closed_loss', -fcBetSize, 'Force-closed: API error + expired');
+          logPolyHypothesis(pos, -fcBetSize, fcBetSize);
           result.closed++;
           result.losses++;
-          result.totalPnl -= parseFloat(pos.bet_size);
+          result.totalPnl -= fcBetSize;
         }
         continue;
       }
@@ -800,6 +839,7 @@ export async function reconcilePolymarketPositions(): Promise<{
               : -betSize;
             const status = softWon ? 'closed_win' : 'closed_loss';
             await closePosition(pos.id, status, pnl, `Soft-resolved via price: ${softOutcome} at $${parseFloat(priceWinner.price).toFixed(3)}`);
+            logPolyHypothesis(pos, pnl, betSize);
             result.closed++;
             if (softWon) result.wins++;
             else result.losses++;
@@ -812,10 +852,12 @@ export async function reconcilePolymarketPositions(): Promise<{
         // No price-based winner yet. Check for force-close at 60+ min
         if (minutesSinceExpiry > 60) {
           console.warn(`[PolyResolve] Force-closing unresolved position (${minutesSinceExpiry.toFixed(0)}min post-expiry): ${pos.question.substring(0, 50)}`);
-          await closePosition(pos.id, 'closed_loss', -parseFloat(pos.bet_size), 'Force-closed: unresolved 60+ min past expiry');
+          const fc60BetSize = parseFloat(pos.bet_size);
+          await closePosition(pos.id, 'closed_loss', -fc60BetSize, 'Force-closed: unresolved 60+ min past expiry');
+          logPolyHypothesis(pos, -fc60BetSize, fc60BetSize);
           result.closed++;
           result.losses++;
-          result.totalPnl -= parseFloat(pos.bet_size);
+          result.totalPnl -= fc60BetSize;
         } else if (minutesSinceExpiry > 0) {
           console.log(`[PolyResolve] Awaiting resolution (${minutesSinceExpiry.toFixed(0)}min post-expiry): ${pos.question.substring(0, 50)}`);
         }
@@ -842,6 +884,7 @@ export async function reconcilePolymarketPositions(): Promise<{
 
       const status = won ? 'closed_win' : 'closed_loss';
       await closePosition(pos.id, status, pnl, `Resolved: ${winnerOutcome} won`);
+      logPolyHypothesis(pos, pnl, betSize);
 
       result.closed++;
       if (won) result.wins++;

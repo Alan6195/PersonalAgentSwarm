@@ -217,7 +217,7 @@ async function getDashboard() {
   const scanRows = await query(
     `SELECT id, platform, question as market_question, category,
             current_prob, claude_prob, edge, kelly_fraction, claude_reasoning as reasoning,
-            scanned_at as created_at
+            scanned_at as created_at, acted_on
      FROM market_scans
      ORDER BY scanned_at DESC
      LIMIT 20`
@@ -232,6 +232,7 @@ async function getDashboard() {
     kelly_fraction: parseFloat(row.kelly_fraction) || 0,
     reasoning: row.reasoning || "",
     created_at: row.created_at,
+    acted_on: row.acted_on === true,
   }));
 
   // Hypotheses

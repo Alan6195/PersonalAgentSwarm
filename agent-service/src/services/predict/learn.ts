@@ -18,7 +18,7 @@ import { logCostEvent } from '../cost-tracker';
 
 const anthropic = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
 
-const MAX_ACTIVE_HYPOTHESES = 10;
+const MAX_ACTIVE_HYPOTHESES = 20;
 const MAX_INJECTED_HYPOTHESES = 10;
 
 // ── maybeLogHypothesis ───────────────────────────────────────────────
@@ -31,6 +31,11 @@ interface HypothesisInput {
   pnlPct: number;
   marketQuestion: string;
   intelAligned: boolean;
+  // Polymarket-specific (optional for Manifold backward compat)
+  asset?: string;           // BTC, ETH, SOL, XRP
+  windowMinutes?: number;   // 5 or 15
+  signalStrength?: string;  // strong_up, up, neutral, down, strong_down
+  platform?: string;        // manifold or polymarket
 }
 
 /**
@@ -39,11 +44,11 @@ interface HypothesisInput {
  * Cap at MAX_ACTIVE_HYPOTHESES total.
  */
 export async function maybeLogHypothesis(input: HypothesisInput): Promise<void> {
-  const { positionId, category, edge, pnlPct, intelAligned } = input;
+  const { positionId, category, edge, pnlPct, intelAligned, asset, windowMinutes, signalStrength, platform } = input;
   const isWin = pnlPct >= 0;
 
   // Generate implicit hypothesis candidates from this trade
-  const candidates = [
+  const candidates: Array<{ variable: string; category: string; hypothesis: string; prediction: string }> = [
     {
       variable: `category:${category}`,
       category: 'category',
@@ -63,6 +68,48 @@ export async function maybeLogHypothesis(input: HypothesisInput): Promise<void> 
       prediction: isWin ? 'outperform' : 'underperform',
     },
   ];
+
+  // Polymarket-specific hypothesis candidates
+  if (platform === 'polymarket') {
+    if (asset) {
+      candidates.push({
+        variable: `asset:${asset}`,
+        category: 'asset',
+        hypothesis: `${asset} markets have ${isWin ? 'above' : 'below'} average win rate`,
+        prediction: isWin ? 'outperform' : 'underperform',
+      });
+    }
+
+    if (windowMinutes) {
+      const label = windowMinutes <= 5 ? '5m' : '15m';
+      candidates.push({
+        variable: `window:${label}`,
+        category: 'window',
+        hypothesis: `${label} windows have ${isWin ? 'higher' : 'lower'} win rate than other durations`,
+        prediction: isWin ? 'outperform' : 'underperform',
+      });
+    }
+
+    if (signalStrength) {
+      const isStrong = signalStrength.startsWith('strong');
+      candidates.push({
+        variable: `signal:${isStrong ? 'strong' : 'moderate'}`,
+        category: 'signal',
+        hypothesis: `${isStrong ? 'Strong' : 'Moderate'} momentum signals have ${isWin ? 'higher' : 'lower'} win rate`,
+        prediction: isWin ? 'outperform' : 'underperform',
+      });
+    }
+
+    // Time of day: bucket by UTC hour
+    const hour = new Date().getUTCHours();
+    const tod = hour < 6 ? 'night' : hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
+    candidates.push({
+      variable: `time_of_day:${tod}`,
+      category: 'time_of_day',
+      hypothesis: `${tod.charAt(0).toUpperCase() + tod.slice(1)} trading sessions have ${isWin ? 'higher' : 'lower'} win rate`,
+      prediction: isWin ? 'outperform' : 'underperform',
+    });
+  }
 
   for (const cand of candidates) {
     try {
