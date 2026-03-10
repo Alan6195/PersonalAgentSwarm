@@ -226,6 +226,23 @@ function timeAgo(iso: string) {
   return `${Math.floor(s / 3600)}h ago`;
 }
 
+// Convert "March 9, 4:00PM-4:15PM ET" to MST (ET - 2h)
+function etToMst(question: string): string {
+  const cvt = (h: number, m: string, ap: string): string => {
+    const isPM = ap.toUpperCase() === 'PM';
+    let hr24 = isPM ? (h === 12 ? 12 : h + 12) : (h === 12 ? 0 : h);
+    hr24 = ((hr24 - 2) + 24) % 24;
+    const newAP = hr24 >= 12 ? 'PM' : 'AM';
+    const newHr = hr24 === 0 ? 12 : hr24 > 12 ? hr24 - 12 : hr24;
+    return `${newHr}:${m}${newAP}`;
+  };
+  return question.replace(
+    /(\d{1,2}):(\d{2})(AM|PM)-(\d{1,2}):(\d{2})(AM|PM)\s*ET$/i,
+    (_, h1, m1, ap1, h2, m2, ap2) =>
+      `${cvt(+h1, m1, ap1)}-${cvt(+h2, m2, ap2)} MST`
+  );
+}
+
 // ── SparkLine ─────────────────────────────────────────────────────────────
 function SparkLine({ data, color = C.green }: { data: number[]; color?: string }) {
   if (data.length < 2) return null;
@@ -361,7 +378,7 @@ function PositionRow({ pos }: { pos: Position }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
         <span className="position-question" style={{ fontSize: 11, color: C.white, flex: 1, marginRight: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {pos.asset && <span style={{ color: C.cyan, marginRight: 6 }}>{pos.asset}</span>}
-          {pos.market_question}
+          {etToMst(pos.market_question)}
         </span>
         <span className="position-pnl" style={{ fontSize: 12, fontWeight: 700, color: pnlColor, flexShrink: 0 }}>
           {pnlLabel && <span style={{ fontSize: 7, color: C.label, marginRight: 3 }}>{pnlLabel}</span>}
@@ -408,7 +425,7 @@ function ScanRow({ scan }: { scan: Scan }) {
     <div style={{ padding: '7px 10px', borderBottom: `1px solid ${C.border2}`, fontFamily: 'monospace' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
         <span style={{ fontSize: 10, color: C.text, flex: 1, marginRight: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {scan.market_question}
+          {etToMst(scan.market_question)}
         </span>
         <span style={{ fontSize: 11, color: edgeColor, fontWeight: 700, flexShrink: 0 }}>
           {(scan.edge * 100).toFixed(0)}¢
