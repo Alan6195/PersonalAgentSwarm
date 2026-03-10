@@ -48,7 +48,7 @@ export const POLY_RISK_LIMITS: RiskLimits = {
   dailyLossPausePct: 1.00,    // Disabled: no daily loss pause (was 25%)
   drawdownPausePct: 0.30,     // 30% drawdown from peak = hard stop
   minEdge: 0.06,              // 6c net edge (LMSR removed; edge from momentum + intel signals only)
-  minBet: 0.50,               // lower min for small bankroll
+  minBet: 1.00,               // raised from 0.50 — small bets waste execution overhead
 };
 
 /**

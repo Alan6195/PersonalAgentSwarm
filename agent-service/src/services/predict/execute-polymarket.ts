@@ -1078,11 +1078,17 @@ export async function redeemAllWinnings(): Promise<{
         const ageSeconds = parseFloat(posAge[0]?.age_seconds || '0');
 
         if (ageSeconds > 3600) {
-          // Position closed > 1 hour ago: settlement should have completed. Mark as redeemed
-          // (tokens were likely already redeemed externally or settlement never happened).
-          console.log(`[PolyRedeem] ${conditionId.substring(0, 16)}: no tokens (age=${Math.round(ageSeconds / 60)}min), marking redeemed`);
+          // Position closed > 1 hour ago with 0 tokens: flag for review.
+          // DO NOT mark as redeemed (phantom win). Keep trading.
+          console.warn(`[PolyRedeem] ${conditionId.substring(0, 16)}: 0 tokens after ${Math.round(ageSeconds / 60)}min, flagging needs_review`);
           for (const pos of condPositions) {
-            await markPositionRedeemed(pos.id, undefined);
+            await query(
+              `UPDATE market_positions
+               SET status = 'needs_review',
+                   notes = COALESCE(notes, '') || ' | CTF_balance=0_after_1hr'
+               WHERE id = $1`,
+              [pos.id]
+            );
           }
         } else {
           // Position is recent: settlement may be pending. Skip and retry next cycle.

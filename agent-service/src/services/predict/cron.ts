@@ -170,10 +170,30 @@ async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
   // Get bankroll
   const bankroll = await getPolyBankroll();
 
-  // Compute bet size: 5% max * signal strength as Kelly proxy
-  // Signal strength 0.4-1.0 maps to 8-20% of max position (conservative)
-  const kellyProxy = Math.min(0.20, signal.signalStrength * 0.20);
-  const betSize = Math.max(0.50, Math.min(bankroll * kellyProxy, bankroll * 0.05));
+  // Rolling Kelly: use empirical win rate from last 20 trades for bet sizing
+  const recentTrades = await query<{ status: string }>(
+    `SELECT status FROM market_positions
+     WHERE platform = 'polymarket'
+       AND status IN ('closed_win', 'closed_loss')
+       AND (notes IS NULL OR notes NOT LIKE 'scanner bug%')
+       AND (notes IS NULL OR notes NOT LIKE 'Auto-closed%')
+     ORDER BY closed_at DESC LIMIT 20`
+  );
+  const wins = recentTrades.filter(r => r.status === 'closed_win').length;
+  const total = recentTrades.length;
+  const recentWR = total >= 5 ? wins / total : 0.50;
+
+  // Kelly formula for binary market (win ~= 1x bet)
+  const rawKelly = Math.max(0, recentWR - (1 - recentWR));
+
+  // Fractional Kelly scales with confidence in the model
+  const kellyFraction = recentWR > 0.55 ? 0.33
+                       : recentWR > 0.52 ? 0.20
+                       : recentWR > 0.50 ? 0.10
+                       :                   0.05;
+
+  const betPct = Math.min(rawKelly * kellyFraction, 0.10); // hard cap at 10% bankroll
+  const betSize = Math.max(1.00, bankroll * betPct);        // min $1.00
 
   // Model probability estimate from OFI:
   // OFI of +0.3 suggests ~57% chance of Up outcome

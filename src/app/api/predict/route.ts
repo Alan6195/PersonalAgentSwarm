@@ -506,29 +506,45 @@ async function getSharedSignals() {
  * Returns minutes until market closes, or -1 if unparseable.
  */
 function getTimeRemainingMin(question: string): number {
-  const match = question.match(/(\d{1,2}):(\d{2})(AM|PM)\s*ET$/i);
+  // Extract date AND closing time from question text
+  const match = question.match(/(\w+)\s+(\d+),\s*[\d:]+[AP]M-(\d{1,2}):(\d{2})(AM|PM)\s*ET$/i);
   if (!match) return -1;
 
-  let hours = parseInt(match[1]);
-  const minutes = parseInt(match[2]);
-  const isPM = match[3].toUpperCase() === 'PM';
+  const monthName = match[1];
+  const day = parseInt(match[2]);
+  let hours = parseInt(match[3]);
+  const minutes = parseInt(match[4]);
+  const isPM = match[5].toUpperCase() === 'PM';
 
   if (isPM && hours !== 12) hours += 12;
   if (!isPM && hours === 12) hours = 0;
 
-  // Convert ET to UTC: use Intl to get current ET offset dynamically
-  const now = new Date();
+  const months: Record<string, number> = {
+    January: 0, February: 1, March: 2, April: 3, May: 4, June: 5,
+    July: 6, August: 7, September: 8, October: 9, November: 10, December: 11,
+  };
+  const month = months[monthName];
+  if (month === undefined) return -1;
+
+  const year = new Date().getFullYear();
+
+  // Get ET-to-UTC offset for the market date (handles DST correctly).
+  // Create an approximate UTC time, check what ET hour it maps to,
+  // then derive the offset.
+  const approxUtc = new Date(Date.UTC(year, month, day, hours, minutes, 0));
   const etHour = parseInt(
     new Intl.DateTimeFormat('en-US', {
       timeZone: 'America/New_York',
       hour: 'numeric',
       hour12: false,
-    }).format(now)
+    }).format(approxUtc)
   );
-  const etOffset = ((now.getUTCHours() - etHour) + 24) % 24;
+  const etOffset = ((hours - etHour) + 24) % 24;
 
-  const expiry = new Date(now);
-  expiry.setUTCHours(hours + etOffset, minutes, 0, 0);
+  // Anchor to the MARKET DATE (not now) so day rollover is correct.
+  // Date.UTC handles hours >= 24 by advancing the day.
+  const expiryUtc = new Date(Date.UTC(year, month, day, hours + etOffset, minutes, 0));
 
-  return (expiry.getTime() - now.getTime()) / 60000;
+  const now = new Date();
+  return (expiryUtc.getTime() - now.getTime()) / 60000;
 }
