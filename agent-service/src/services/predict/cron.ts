@@ -714,10 +714,17 @@ export async function handleDailySummary(): Promise<string> {
 }
 
 async function getPolyBankroll(): Promise<number> {
-  // Use actual on-chain wallet balance as source of truth.
-  // daily_risk_state drifts when redemptions are missed or trades settle unexpectedly.
+  // Wallet balance + open position exposure = true bankroll.
+  // Wallet alone under-reports when USDC is locked in CLOB orders.
   const balance = await getUSDCBalance();
-  if (balance !== null && balance >= 0.01) return balance;
+  if (balance !== null && balance >= 0.01) {
+    const openExposure = await queryOne<{ total: string }>(
+      `SELECT COALESCE(SUM(bet_size), 0) as total FROM market_positions WHERE platform = 'polymarket' AND status = 'open'`,
+      []
+    );
+    const locked = parseFloat(openExposure?.total || '0');
+    return balance + locked;
+  }
 
   // Fallback to daily risk state if wallet check fails
   const todayStr = new Date().toISOString().split('T')[0];
