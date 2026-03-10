@@ -287,7 +287,7 @@ async function handleOrderFlowSignal(signal: OrderFlowSignal): Promise<void> {
       edge: signal.signalStrength * 0.15,
       direction: signal.entryDirection as 'YES' | 'NO',
       betAmount: betSize,
-      kellyFrac: kellyProxy,
+      kellyFrac: rawKelly * kellyFraction,
       expectedRet: signal.signalStrength * 0.10,
       score: signal.signalStrength,
       resolutionMinutes: signal.windowMinutes,
