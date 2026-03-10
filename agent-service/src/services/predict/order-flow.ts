@@ -93,6 +93,7 @@ class OrderFlowService {
   private recentlySignaled: Set<string> = new Set(); // next-market conditionIds already signaled (dedup)
   private reconnectTimer: NodeJS.Timeout | null = null;
   private signalCheckTimer: NodeJS.Timeout | null = null;
+  private pingTimer: NodeJS.Timeout | null = null;
   private onSignal: ((signal: OrderFlowSignal) => void) | null = null;
   private isConnected = false;
   private reconnectAttempts = 0;
@@ -156,14 +157,17 @@ class OrderFlowService {
       }
     }
 
+    // CRITICAL: store new tokens so reconnect handler uses fresh IDs
+    this.subscribedTokens = newTokenIds;
+
     // Reconnect if token set changed
     const tokensChanged = newTokenIds.length !== oldTokens.size ||
       newTokenIds.some(t => !oldTokens.has(t));
 
     if (tokensChanged && this.ws) {
-      console.log(`[OrderFlow] Market set changed, reconnecting (${newTokenIds.length} tokens)`);
+      console.log(`[OrderFlow] Market set changed, reconnecting with ${newTokenIds.length} fresh tokens`);
       this.ws.close();
-      // Reconnect handler will fire and use new token list
+      // on('close') handler will call connect(this.subscribedTokens) with updated tokens
     }
   }
 
@@ -171,7 +175,9 @@ class OrderFlowService {
   stop(): void {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     if (this.signalCheckTimer) clearInterval(this.signalCheckTimer);
+    if (this.pingTimer) clearInterval(this.pingTimer);
     this.signalCheckTimer = null;
+    this.pingTimer = null;
     if (this.ws) {
       this.ws.removeAllListeners();
       this.ws.close();
@@ -228,6 +234,14 @@ class OrderFlowService {
         });
         this.ws!.send(subMsg);
         console.log(`[OrderFlow] Subscribed to ${tokenIds.length} tokens`);
+
+        // Keep-alive: send WebSocket ping every 30s to prevent idle disconnect
+        if (this.pingTimer) clearInterval(this.pingTimer);
+        this.pingTimer = setInterval(() => {
+          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.ping();
+          }
+        }, 30_000);
       });
 
       this.ws.on('message', (data: Buffer) => {
@@ -239,6 +253,7 @@ class OrderFlowService {
 
       this.ws.on('close', () => {
         this.isConnected = false;
+        if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
         const delay = Math.min(
           RECONNECT_DELAY_MS * Math.pow(2, this.reconnectAttempts),
           MAX_RECONNECT_DELAY_MS
@@ -265,8 +280,11 @@ class OrderFlowService {
     const eventType = msg.event_type as string;
 
     // Log first few messages for debugging subscription format
-    if (this.msgCount <= 5) {
+    if (this.msgCount <= 10) {
       console.log(`[OrderFlow] WS msg #${this.msgCount}: event_type=${eventType}, keys=${Object.keys(msg).join(',')}`);
+      if (eventType === 'price_change') {
+        console.log(`[OrderFlow] price_change sample: ${JSON.stringify(msg).substring(0, 500)}`);
+      }
     }
 
     if (eventType === 'last_trade_price') {
