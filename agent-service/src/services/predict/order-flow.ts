@@ -285,30 +285,10 @@ class OrderFlowService {
     }
 
     if (eventType === 'last_trade_price') {
+      // Only actual trade fills drive OFI signal. price_change events include
+      // market maker resting orders which are balanced buy/sell and dilute the signal.
       this.tradeCount++;
       this.handleTrade(msg);
-    } else if (eventType === 'price_change') {
-      // price_change events contain filled order data with asset_id, price, size, side.
-      // Process each token's fill as a trade for order flow computation.
-      const changes = msg.price_changes as any[];
-      if (Array.isArray(changes)) {
-        for (const pc of changes) {
-          const assetId = pc.asset_id as string;
-          const side = pc.side as string;
-          const size = parseFloat(pc.size);
-          const price = parseFloat(pc.price);
-          if (assetId && side && !isNaN(size) && !isNaN(price) && this.tradeHistory.has(assetId)) {
-            this.tradeCount++;
-            this.handleTrade({
-              asset_id: assetId,
-              side,
-              size: String(size),
-              price: String(price),
-              timestamp: String(msg.timestamp || Date.now()),
-            });
-          }
-        }
-      }
     }
 
     // Periodic status log every 60s
