@@ -141,15 +141,18 @@ async function getDashboard() {
     balance: parseFloat(row.balance) || 0,
   }));
 
-  // Open positions (both platforms) with enriched data
+  // Open + recently closed positions (both platforms) with enriched data
   const positionRows = await query(
     `SELECT id, platform, market_id, question as market_question, direction,
             p_market, p_model, edge, bet_size, fill_price, asset,
-            intel_aligned, status, pnl, opened_at
+            intel_aligned, status, pnl, opened_at, closed_at
      FROM market_positions
      WHERE status = 'open'
-     ORDER BY opened_at DESC
-     LIMIT 20`
+        OR (status IN ('closed_win', 'closed_loss') AND closed_at > NOW() - INTERVAL '1 hour')
+     ORDER BY
+       CASE WHEN status = 'open' THEN 0 ELSE 1 END,
+       opened_at DESC
+     LIMIT 30`
   );
 
   // Fetch live market prices for open Polymarket positions (parallel)
@@ -210,6 +213,7 @@ async function getDashboard() {
       status: row.status,
       pnl: row.pnl != null ? parseFloat(row.pnl) : null,
       opened_at: row.opened_at,
+      closed_at: row.closed_at || null,
     };
   });
 

@@ -41,6 +41,7 @@ interface Position {
   status: string;
   pnl: number | null;
   opened_at: string;
+  closed_at: string | null;
 }
 
 interface Scan {
@@ -360,30 +361,74 @@ function RiskPanel({ risk }: { risk: RiskState }) {
 
 // ── Position card ─────────────────────────────────────────────────────────
 function PositionRow({ pos }: { pos: Position }) {
-  const hasLive = pos.current_price != null && pos.current_price > 0;
-  const displayPnl = pos.pnl ?? pos.unrealized_pnl ?? 0;
-  const pnlLabel = pos.pnl != null ? '' : (hasLive ? 'UNRL' : 'POT');
-  const displayPnlValue = pos.pnl != null ? displayPnl : (hasLive ? displayPnl : pos.potential_win);
-  const pnlColor = displayPnlValue >= 0 ? C.green : C.red;
+  const isClosed = pos.status === 'closed_win' || pos.status === 'closed_loss';
+  const isWin = pos.status === 'closed_win';
+  const isLoss = pos.status === 'closed_loss';
+  const hasLive = !isClosed && pos.current_price != null && pos.current_price > 0;
 
-  // Time remaining
+  // P&L display logic
+  let displayPnl: number;
+  let pnlLabel: string;
+  if (isClosed && pos.pnl != null) {
+    displayPnl = pos.pnl;
+    pnlLabel = '';
+  } else if (hasLive && pos.unrealized_pnl != null) {
+    displayPnl = pos.unrealized_pnl;
+    pnlLabel = 'UNRL';
+  } else {
+    displayPnl = pos.potential_win;
+    pnlLabel = 'POT';
+  }
+  const pnlColor = displayPnl >= 0 ? C.green : C.red;
+
+  // Status badge for closed trades
+  const statusBadge = isClosed ? {
+    text: isWin ? 'WON' : 'LOST',
+    bg: isWin ? C.green : C.red,
+    fg: '#0a0a0a',
+  } : null;
+
+  // Border color based on status
+  const borderLeftColor = isClosed ? (isWin ? C.green : C.red) : 'transparent';
+
+  // Time remaining (only for open positions)
   const trMin = pos.time_remaining_min;
-  const timeStr = trMin != null
+  const timeStr = !isClosed && trMin != null
     ? (trMin <= 0 ? 'EXPIRED' : trMin < 1 ? `${Math.round(trMin * 60)}s` : `${Math.round(trMin)}m`)
     : null;
   const timeColor = trMin != null ? (trMin <= 0 ? C.red : trMin < 2 ? C.yellow : C.greenDim) : C.dim;
 
+  // For open positions: color unrealized P&L based on current vs entry price
+  const livePnlHint = hasLive && pos.current_price != null
+    ? (pos.current_price > pos.fill_price ? C.green : pos.current_price < pos.fill_price ? C.red : C.text)
+    : C.dim;
+
   return (
-    <div style={{ padding: '8px 10px', borderBottom: `1px solid ${C.border2}`, fontFamily: 'monospace' }}>
+    <div style={{
+      padding: '8px 10px', borderBottom: `1px solid ${C.border2}`, fontFamily: 'monospace',
+      borderLeft: `3px solid ${borderLeftColor}`,
+      opacity: isClosed ? 0.85 : 1,
+    }}>
       {/* Row 1: Question + P&L */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
-        <span className="position-question" style={{ fontSize: 11, color: C.white, flex: 1, marginRight: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {pos.asset && <span style={{ color: C.cyan, marginRight: 6 }}>{pos.asset}</span>}
-          {etToMst(pos.market_question)}
-        </span>
-        <span className="position-pnl" style={{ fontSize: 12, fontWeight: 700, color: pnlColor, flexShrink: 0 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, marginRight: 10 }}>
+          {statusBadge && (
+            <span style={{
+              fontSize: 9, fontWeight: 700, letterSpacing: '0.08em',
+              color: statusBadge.fg, background: statusBadge.bg,
+              padding: '2px 6px', borderRadius: 2, marginRight: 6, flexShrink: 0,
+            }}>
+              {statusBadge.text}
+            </span>
+          )}
+          <span className="position-question" style={{ fontSize: 11, color: C.white, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {pos.asset && <span style={{ color: C.cyan, marginRight: 6 }}>{pos.asset}</span>}
+            {etToMst(pos.market_question)}
+          </span>
+        </div>
+        <span className="position-pnl" style={{ fontSize: 13, fontWeight: 700, color: pnlColor, flexShrink: 0 }}>
           {pnlLabel && <span style={{ fontSize: 7, color: C.label, marginRight: 3 }}>{pnlLabel}</span>}
-          {fmt2(displayPnlValue)}
+          {displayPnl >= 0 ? '+' : ''}{fmt2(displayPnl)}
         </span>
       </div>
 
@@ -397,17 +442,24 @@ function PositionRow({ pos }: { pos: Position }) {
             ⏱ {timeStr}
           </span>
         )}
+        {isClosed && pos.closed_at && (
+          <span style={{ fontSize: 9, color: C.dim }}>closed {timeAgo(pos.closed_at)}</span>
+        )}
         <span style={{ fontSize: 9, color: C.dim, marginLeft: 'auto' }}>{timeAgo(pos.opened_at)}</span>
       </div>
 
       {/* Row 3: Trade details grid */}
-      <div className="position-details-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 4 }}>
+      <div className="position-details-grid" style={{ display: 'grid', gridTemplateColumns: isClosed ? 'repeat(4, 1fr)' : 'repeat(5, 1fr)', gap: 4 }}>
         {[
           { l: 'SIZE',    v: `$${pos.bet_size.toFixed(2)}`, c: C.text },
           { l: 'ENTRY',   v: `${(pos.fill_price * 100).toFixed(1)}¢`, c: C.text },
-          { l: 'CURRENT', v: hasLive ? `${(pos.current_price! * 100).toFixed(1)}¢` : '--', c: hasLive ? (pos.current_price! > pos.fill_price ? C.green : pos.current_price! < pos.fill_price ? C.red : C.text) : C.dim },
+          ...(!isClosed ? [
+            { l: 'CURRENT', v: hasLive ? `${(pos.current_price! * 100).toFixed(1)}¢` : '--', c: livePnlHint },
+          ] : []),
           { l: 'SHARES',  v: pos.shares.toFixed(1), c: C.text },
-          { l: 'IF WIN',  v: `+${pos.potential_win.toFixed(2)}`, c: C.greenDim },
+          { l: isClosed ? 'P&L' : 'IF WIN',
+            v: isClosed ? `${displayPnl >= 0 ? '+' : ''}${fmt2(displayPnl)}` : `+${pos.potential_win.toFixed(2)}`,
+            c: isClosed ? pnlColor : C.greenDim },
         ].map(d => (
           <div key={d.l}>
             <div style={{ fontSize: 7, color: C.label, letterSpacing: '0.08em' }}>{d.l}</div>
